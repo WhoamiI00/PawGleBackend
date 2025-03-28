@@ -32,7 +32,15 @@ ALLOWED_HOSTS = ["*"]
 # Add these configurations if they aren't already present
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Adjust the path if needed
-
+# Email configuration
+# Email configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'ankit62878@gmail.com'  # Replace with your Gmail
+EMAIL_HOST_PASSWORD = 'ntbd bbus psvy uyis'  # You'll generate this in step 3
+DEFAULT_FROM_EMAIL = 'PawGle Support <ankit62878@gmail.com>'
 
 INSTALLED_APPS = [
     'django.contrib.admin',

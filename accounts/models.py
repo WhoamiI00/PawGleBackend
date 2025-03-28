@@ -206,3 +206,13 @@ class PetLocation(models.Model):
         self.status = 'lost'
         self.resolved_at = None
         self.save()
+
+class Notification(models.Model):
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE
+    )
+    verb = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    target = models.ForeignKey(Pet, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)

@@ -4,7 +4,7 @@ from .views import (
     ReportPetLocationView, MarkPetStatusView, UserPetLocationsView,
     # Include your existing views here
     RegisterView, LoginView, ProfileView, AddPetView, PublicPetDashboardView, 
-    DeletePetView, SearchPetView, EditPetView, GetPetCountView, GetUserCountView
+    DeletePetView, SearchPetView, EditPetView, GetPetCountView, GetUserCountView, contact_pet_owner
 )
 
 urlpatterns = [
@@ -27,4 +27,6 @@ urlpatterns = [
     path('pets/report/', ReportPetLocationView.as_view(), name='report_pet'),
     path('pets/locations/<int:location_id>/status/', MarkPetStatusView.as_view(), name='update_pet_status'),
     path('user/pet-locations/', UserPetLocationsView.as_view(), name='user_pet_locations'),
+    path('pets/contact-owner/', contact_pet_owner, name='contact_pet_owner'),
+
 ]

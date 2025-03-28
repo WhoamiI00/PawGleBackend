@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #4a6fa5; color: white; padding: 15px; border-radius: 5px 5px 0 0; }
+        .content { padding: 20px; background-color: #f9f9f9; border-radius: 0 0 5px 5px; }
+        .footer { margin-top: 20px; font-size: 12px; color: #777; text-align: center; }
+        .pet-info { background-color: #e9f0f7; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .contact-info { background-color: #f0f7e9; padding: 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>Someone Has Information About Your Pet</h2>
+        </div>
+        <div class="content">
+            <p>Hello,</p>
+            <p>Someone has contacted you regarding your pet through our secure messaging system.</p>
+            
+            <div class="pet-info">
+                <h3>Pet Information</h3>
+                <p><strong>Name:</strong> {{ pet_name }}</p>
+                <p><strong>Type:</strong> {{ pet_type }}</p>
+                <p><strong>Breed:</strong> {{ pet_breed }}</p>
+                <p><strong>Category:</strong> {{ pet_category }}</p>
+            </div>
+            
+            <h3>Message</h3>
+            <p>{{ message }}</p>
+            
+            <!--IMAGE_PLACEHOLDER-->
+            
+            <div class="contact-info">
+                <h3>Contact Information</h3>
+                <p><strong>Name:</strong> {{ contact_name }}</p>
+                {% if contact_email %}
+                <p><strong>Email:</strong> {{ contact_email }}</p>
+                {% endif %}
+                {% if contact_phone %}
+                <p><strong>Phone:</strong> {{ contact_phone }}</p>
+                {% endif %}
+            </div>
+            
+            <p>To protect your privacy, please reply to this email and our support team will forward your response to the person who contacted you.</p>
+            
+            <p>Best regards,<br>PawGle Support Team</p>
+        </div>
+        <div class="footer">
+            <p>This email was sent on {{ current_date }}.</p>
+            <p>© 2025 PawGle. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -490,3 +490,206 @@ class UserPetLocationsView(generics.ListAPIView):
         return PetLocation.objects.filter(
             pet__owner=self.request.user
         ).select_related('pet')
+    
+
+from django.core.mail import EmailMultiAlternatives
+from django.http import JsonResponse
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
+from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+import os
+from .models import Pet, PetLocation, Notification
+
+@require_POST
+@csrf_exempt
+def contact_pet_owner(request):
+    try:
+        # Get data from request
+        pet_id = request.POST.get('pet_id')
+        message = request.POST.get('message')
+        contact_name = request.POST.get('contact_name')
+        contact_email = request.POST.get('contact_email')
+        contact_phone = request.POST.get('contact_phone', '')
+        image = request.FILES.get('image')
+        
+        # Validate required fields
+        if not all([pet_id, message, contact_name, contact_email]):
+            return JsonResponse({
+                'success': False,
+                'message': 'Missing required fields'
+            }, status=400)
+        
+        # Get pet and owner information
+        try:
+            pet_location = PetLocation.objects.get(id=pet_id)
+            pet = pet_location.pet
+            owner = pet.owner
+        except PetLocation.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'Pet not found'
+            }, status=404)
+        
+        # Create HTML email content directly in the view
+        current_date = timezone.now().strftime("%A, %B %d, %Y, %I:%M %p %Z")
+        
+        # Create HTML email content
+        html_message = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background-color: #4a6fa5; color: white; padding: 15px; border-radius: 5px 5px 0 0; }}
+                .content {{ padding: 20px; background-color: #f9f9f9; border-radius: 0 0 5px 5px; }}
+                .footer {{ margin-top: 20px; font-size: 12px; color: #777; text-align: center; }}
+                .pet-info {{ background-color: #e9f0f7; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
+                .contact-info {{ background-color: #f0f7e9; padding: 15px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>Someone Has Information About Your Pet</h2>
+                </div>
+                <div class="content">
+                    <p>Hello,</p>
+                    <p>Someone has contacted you regarding your pet through our secure messaging system.</p>
+                    
+                    <div class="pet-info">
+                        <h3>Pet Information</h3>
+                        <p><strong>Name:</strong> {pet.name}</p>
+                        <p><strong>Type:</strong> {pet.type}</p>
+                        <p><strong>Breed:</strong> {pet.breed}</p>
+                        <p><strong>Category:</strong> {pet.category}</p>
+                    </div>
+                    
+                    <h3>Message</h3>
+                    <p>{message}</p>
+                    
+                    <div class="contact-info">
+                        <h3>Contact Information</h3>
+                        <p><strong>Name:</strong> {contact_name}</p>
+                        <p><strong>Email:</strong> {contact_email}</p>
+                        {f'<p><strong>Phone:</strong> {contact_phone}</p>' if contact_phone else ''}
+                    </div>
+                    
+                    <p>To protect your privacy, please reply to this email and our support team will forward your response to the person who contacted you.</p>
+                    
+                    <p>Best regards,<br>PawGle Support Team</p>
+                </div>
+                <div class="footer">
+                    <p>This email was sent on {current_date}.</p>
+                    <p>© 2025 PawGle. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Plain text version of the email
+        plain_message = f"""
+        Someone Has Information About Your Pet
+        
+        Hello,
+        
+        Someone has contacted you regarding your pet through our secure messaging system.
+        
+        Pet Information:
+        Name: {pet.name}
+        Type: {pet.type}
+        Breed: {pet.breed}
+        Category: {pet.category}
+        
+        Message:
+        {message}
+        
+        Contact Information:
+        Name: {contact_name}
+        {f'Phone: {contact_phone}' if contact_phone else ''}
+        
+        To protect your privacy, please reply to this email and our support team will forward your response to the person who contacted you.
+        
+        Best regards,
+        PawGle Support Team
+        
+        This email was sent on {current_date}.
+        """
+        
+        try:
+            # Create email subject
+            subject = f"Someone has information about your {pet.type} {pet.name}"
+            
+            # Create email message
+            from django.conf import settings
+            from email.mime.image import MIMEImage
+            
+            # Create email message
+            from django.conf import settings
+            from django.core.mail import EmailMultiAlternatives
+
+            # In your view function:
+            msg = EmailMultiAlternatives(
+                subject=subject,
+                body=plain_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[owner.email],
+                reply_to=[settings.DEFAULT_FROM_EMAIL]
+            )
+            
+            msg.attach_alternative(html_message, "text/html")
+            
+            # If image is attached, include it in the email
+            if image:
+                msg.mixed_subtype = 'related'
+                image_name = f"pet_image_{pet_id}.jpg"
+                
+                # Attach the image
+                img_data = image.read()
+                img = MIMEImage(img_data)
+                img.add_header('Content-ID', f'<{image_name}>')
+                img.add_header('Content-Disposition', 'inline', filename=image_name)
+                msg.attach(img)
+                
+                # Add image reference in HTML
+                img_html = f'<div style="margin: 20px 0;"><img src="cid:{image_name}" alt="Pet Image" style="max-width:100%;border-radius:8px;"></div>'
+                # Insert the image HTML after the message paragraph
+                html_message = html_message.replace('<h3>Message</h3>\n                    <p>{message}</p>', 
+                                                  f'<h3>Message</h3>\n                    <p>{message}</p>\n                    {img_html}')
+                msg.attach_alternative(html_message, "text/html")
+            
+            # Send email
+            msg.send()
+            
+            # Create notification for the pet owner
+            Notification.objects.create(
+                recipient=owner,
+                verb=f"Someone has information about your {pet.type} {pet.name}",
+                description=message[:100] + "..." if len(message) > 100 else message,
+                target=pet
+            )
+            
+            return JsonResponse({
+                'success': True,
+                'message': 'Your message has been sent to the pet owner. They will contact you through our support team.'
+            })
+            
+        except Exception as email_error:
+            # Log the email error
+            print(f"Email error: {str(email_error)}")
+            return JsonResponse({
+                'success': False,
+                'message': 'Failed to send email notification'
+            }, status=500)
+        
+    except Exception as e:
+        # Log the general error
+        print(f"General error in contact_pet_owner: {str(e)}")
+        return JsonResponse({
+            'success': False,
+            'message': 'An unexpected error occurred'
+        }, status=500)

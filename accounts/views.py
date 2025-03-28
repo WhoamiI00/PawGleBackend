@@ -167,6 +167,9 @@ from django.core.files.storage import default_storage
 from .models import Pet
 from .serializers import PetSerializer
 
+import random
+from django.db.utils import IntegrityError
+
 class AddPetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -175,6 +178,7 @@ class AddPetView(APIView):
         try:
             # Prepare base pet data
             pet_data = {
+                # Remove explicit ID assignment - let model handle it
                 'owner': request.user.id,
                 'name': request.data.get('name'),
                 'category': request.data.get('category'),
@@ -207,11 +211,11 @@ class AddPetView(APIView):
                 # Generate unique filename
                 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
                 filename = f"{request.user.id}_{timestamp}_{idx}_{image_file.name}"
-                
+
                 # Save file
                 filepath = default_storage.save(filename, image_file)
                 full_path = default_storage.path(filepath)
-                
+
                 # Process image
                 image = cv2.imread(full_path)
                 if image is None:
@@ -239,14 +243,15 @@ class AddPetView(APIView):
             # Validate and save
             serializer = PetSerializer(data=pet_data, context={'request': request})
             if serializer.is_valid():
-                serializer.save()
+                # Use the model's save method which handles ID generation
+                pet = serializer.save()
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
-            
+
             return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
+            
 import numpy as np
 from django.db.models import Q
 
@@ -364,3 +369,124 @@ class GetUserCountView(APIView):
             return Response({"user_count": user_count}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+from rest_framework import generics, permissions, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.db.models import Q
+from .models import Pet, PetLocation
+from .serializers import PetLocationSerializer, ReportPetLocationSerializer
+
+class ListPetLocationsView(generics.ListAPIView):
+    """
+    List all pet locations (lost and found)
+    """
+    serializer_class = PetLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        # Return only active reports (not resolved)
+        return PetLocation.objects.filter(
+            Q(status='lost') | Q(status='found')
+        ).select_related('pet', 'pet__owner')
+
+class ListLostPetsView(generics.ListAPIView):
+    """
+    List only lost pets
+    """
+    serializer_class = PetLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return PetLocation.objects.filter(
+            status='lost'
+        ).select_related('pet', 'pet__owner')
+
+class ListFoundPetsView(generics.ListAPIView):
+    """
+    List only found pets
+    """
+    serializer_class = PetLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return PetLocation.objects.filter(
+            status='found'
+        ).select_related('pet', 'pet__owner')
+
+class ReportPetLocationView(generics.CreateAPIView):
+    serializer_class = ReportPetLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(
+            data=request.data,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            pet_location = serializer.save()
+            return Response(
+                PetLocationSerializer(pet_location).data,
+                status=status.HTTP_201_CREATED
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class MarkPetStatusView(APIView):
+    """
+    Mark a pet as lost, found or resolved
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, location_id):
+        try:
+            location = PetLocation.objects.get(id=location_id)
+            
+            # Check if user owns the pet
+            if location.pet.owner != request.user:
+                return Response(
+                    {"detail": "You don't have permission to update this pet's status"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            new_status = request.data.get('status')
+            if new_status not in ['lost', 'found', 'resolved']:
+                return Response(
+                    {"detail": "Invalid status value. Must be 'lost', 'found', or 'resolved'"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update the status
+            location.status = new_status
+            
+            # If resolved, set the resolved timestamp
+            if new_status == 'resolved':
+                location.resolved_at = timezone.now()
+                
+            location.save()
+            
+            return Response(
+                PetLocationSerializer(location).data,
+                status=status.HTTP_200_OK
+            )
+            
+        except PetLocation.DoesNotExist:
+            return Response(
+                {"detail": "Pet location not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+class UserPetLocationsView(generics.ListAPIView):
+    """
+    List all locations for the current user's pets
+    """
+    serializer_class = PetLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return PetLocation.objects.filter(
+            pet__owner=self.request.user
+        ).select_related('pet')

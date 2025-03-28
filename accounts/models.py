@@ -1,21 +1,10 @@
-# from django.contrib.auth.models import User
-# from django.db import models
-
-# class Pet(models.Model):
-#     name = models.CharField(max_length=100)
-#     type = models.CharField(max_length=100)
-#     category = models.CharField(max_length=100)
-#     breed = models.CharField(max_length=100)
-#     isPublic = models.BooleanField(default=False)  # 'isPublic' field name
-#     additionalInfo = models.TextField(null=True, blank=True)
-#     photos = models.ImageField(upload_to='pet_photos/')
-#     owner = models.ForeignKey(User, on_delete=models.CASCADE)
-
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
-from django.core.validators import MinLengthValidator, RegexValidator
+from django.core.validators import MinLengthValidator, RegexValidator, MinValueValidator, MaxValueValidator
 import json
+import random
+import uuid
 
 # Define validation functions outside the model
 def validate_json_dict(value):
@@ -38,6 +27,9 @@ class Pet(models.Model):
         ('Livestock', 'Livestock')
     ]
 
+    # Primary key using random number
+    id = models.IntegerField(primary_key=True, editable=False)
+    
     # Required fields with validation
     name = models.CharField(
         max_length=100,
@@ -95,25 +87,42 @@ class Pet(models.Model):
         on_delete=models.CASCADE,
         related_name='pets'
     )
+    
+    # Using UUID-based animal_id to guarantee uniqueness
     animal_id = models.CharField(
-        max_length=20,
+        max_length=40,
         unique=True,
         editable=False
     )
+    
     registered_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.name} ({self.animal_id})"
 
+    def generate_unique_id(self):
+        """Generate a unique random ID between 100000 and 999999"""
+        while True:
+            unique_id = random.randint(100000, 999999)
+            if not Pet.objects.filter(id=unique_id).exists():
+                return unique_id
+
     def save(self, *args, **kwargs):
-        # Generate animal_id if not set
+        # Generate random ID if not set
+        if not self.id:
+            self.id = self.generate_unique_id()
+            
+        # Generate completely unique animal_id if not set
         if not self.animal_id:
-            last_pet = Pet.objects.order_by('-id').first()
-            if last_pet and last_pet.animal_id:
-                last_id = int(last_pet.animal_id[3:])
-            else:
-                last_id = 0
-            self.animal_id = f"ANI{last_id + 1:04d}"
+            # Use UUID to guarantee uniqueness, but format it to look like ANIxxxx
+            # Take first 4 hex chars from a UUID and format
+            uid = str(uuid.uuid4())[:4].upper()
+            self.animal_id = f"ANI{uid}"
+            
+            # Verify it's unique (extremely unlikely to have a collision, but just in case)
+            while Pet.objects.filter(animal_id=self.animal_id).exists():
+                uid = str(uuid.uuid4())[:4].upper()
+                self.animal_id = f"ANI{uid}"
         
         # Type enforcement
         if not isinstance(self.additionalInfo, dict):
@@ -131,3 +140,69 @@ class Pet(models.Model):
             models.Index(fields=['owner']),
         ]
         ordering = ['-registered_at']
+
+class PetLocation(models.Model):
+    STATUS_CHOICES = [
+        ('lost', 'Lost'),
+        ('found', 'Found'),
+        ('resolved', 'Resolved'),
+    ]
+    
+    # Reference to the Pet model
+    pet = models.ForeignKey('Pet', on_delete=models.CASCADE, related_name='locations')
+    
+    # Location data
+    latitude = models.FloatField(
+        validators=[
+            MinValueValidator(-90.0),
+            MaxValueValidator(90.0)
+        ]
+    )
+    longitude = models.FloatField(
+        validators=[
+            MinValueValidator(-180.0),
+            MaxValueValidator(180.0)
+        ]
+    )
+    
+    # Status fields
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='lost')
+    description = models.TextField(blank=True)
+    reported_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    
+    # Contact information
+    contact_name = models.CharField(max_length=100, blank=True)
+    contact_phone = models.CharField(max_length=20, blank=True)
+    contact_email = models.EmailField(blank=True)
+    
+    # Additional information
+    last_seen_date = models.DateField(null=True, blank=True)
+    last_seen_time = models.TimeField(null=True, blank=True)
+    
+    # Add image field
+    image = models.ImageField(upload_to='pet_locations/', null=True, blank=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['pet']),
+            models.Index(fields=['reported_at']),
+        ]
+        ordering = ['-reported_at']
+    
+    def __str__(self):
+        return f"{self.pet.name} - {self.get_status_display()} at {self.reported_at.strftime('%Y-%m-%d %H:%M')}"
+    
+    def mark_as_found(self):
+        """Mark a lost pet as found and update the resolved_at timestamp"""
+        if self.status == 'lost':
+            self.status = 'resolved'
+            self.resolved_at = timezone.now()
+            self.save()
+    
+    def mark_as_lost(self):
+        """Mark a pet as lost"""
+        self.status = 'lost'
+        self.resolved_at = None
+        self.save()

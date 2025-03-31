@@ -5,7 +5,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import RegisterSerializer, UserSerializer, PetSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from .models import Pet
+from .models import Pet,Conversation
 
 
 def authenticate_user_by_email(email, password):
@@ -501,6 +501,20 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 import os
 from .models import Pet, PetLocation, Notification
+# accounts/views.py
+
+from django.http import JsonResponse
+from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+from django.core.mail import EmailMultiAlternatives, send_mail
+from django.conf import settings
+from django.utils import timezone
+from .models import PetLocation, Conversation, Notification, Pet
+from email.mime.image import MIMEImage
+import imaplib
+import email
+from email.header import decode_header
+import uuid
 
 @require_POST
 @csrf_exempt
@@ -532,10 +546,15 @@ def contact_pet_owner(request):
                 'message': 'Pet not found'
             }, status=404)
         
-        # Create HTML email content directly in the view
-        current_date = timezone.now().strftime("%A, %B %d, %Y, %I:%M %p %Z")
-        
+        # Create or get conversation
+        conversation = Conversation.objects.create(
+            pet_location=pet_location,
+            reporter_email=contact_email,
+            reporter_name=contact_name
+        )
+
         # Create HTML email content
+        current_date = timezone.now().strftime("%A, %B %d, %Y, %I:%M %p %Z")
         html_message = f"""
         <!DOCTYPE html>
         <html>
@@ -573,9 +592,10 @@ def contact_pet_owner(request):
                     
                     <div class="contact-info">
                         <h3>Contact Information</h3>
-                        <p><strong>Name:</strong> {contact_name}</p>
-                        <p><strong>Email:</strong> {contact_email}</p>
-                        {f'<p><strong>Phone:</strong> {contact_phone}</p>' if contact_phone else ''}
+                        <p>
+                            <input type="checkbox" id="share-contact" name="share-contact" value="yes">
+                            <label for="share-contact">I agree to share my contact information with the reporter</label>
+                        </p>
                     </div>
                     
                     <p>To protect your privacy, please reply to this email and our support team will forward your response to the person who contacted you.</p>
@@ -610,6 +630,7 @@ def contact_pet_owner(request):
         
         Contact Information:
         Name: {contact_name}
+        Email: {contact_email}
         {f'Phone: {contact_phone}' if contact_phone else ''}
         
         To protect your privacy, please reply to this email and our support team will forward your response to the person who contacted you.
@@ -621,18 +642,8 @@ def contact_pet_owner(request):
         """
         
         try:
-            # Create email subject
-            subject = f"Someone has information about your {pet.type} {pet.name}"
+            subject = f"[PawGle-{conversation.id}] Someone has information about your {pet.type} {pet.name}"
             
-            # Create email message
-            from django.conf import settings
-            from email.mime.image import MIMEImage
-            
-            # Create email message
-            from django.conf import settings
-            from django.core.mail import EmailMultiAlternatives
-
-            # In your view function:
             msg = EmailMultiAlternatives(
                 subject=subject,
                 body=plain_message,
@@ -643,29 +654,23 @@ def contact_pet_owner(request):
             
             msg.attach_alternative(html_message, "text/html")
             
-            # If image is attached, include it in the email
             if image:
                 msg.mixed_subtype = 'related'
                 image_name = f"pet_image_{pet_id}.jpg"
                 
-                # Attach the image
                 img_data = image.read()
                 img = MIMEImage(img_data)
                 img.add_header('Content-ID', f'<{image_name}>')
                 img.add_header('Content-Disposition', 'inline', filename=image_name)
                 msg.attach(img)
                 
-                # Add image reference in HTML
                 img_html = f'<div style="margin: 20px 0;"><img src="cid:{image_name}" alt="Pet Image" style="max-width:100%;border-radius:8px;"></div>'
-                # Insert the image HTML after the message paragraph
                 html_message = html_message.replace('<h3>Message</h3>\n                    <p>{message}</p>', 
                                                   f'<h3>Message</h3>\n                    <p>{message}</p>\n                    {img_html}')
                 msg.attach_alternative(html_message, "text/html")
             
-            # Send email
             msg.send()
             
-            # Create notification for the pet owner
             Notification.objects.create(
                 recipient=owner,
                 verb=f"Someone has information about your {pet.type} {pet.name}",
@@ -679,7 +684,6 @@ def contact_pet_owner(request):
             })
             
         except Exception as email_error:
-            # Log the email error
             print(f"Email error: {str(email_error)}")
             return JsonResponse({
                 'success': False,
@@ -687,9 +691,379 @@ def contact_pet_owner(request):
             }, status=500)
         
     except Exception as e:
-        # Log the general error
         print(f"General error in contact_pet_owner: {str(e)}")
         return JsonResponse({
             'success': False,
             'message': 'An unexpected error occurred'
         }, status=500)
+
+@require_POST
+@csrf_exempt
+def toggle_share_contact_info(request):
+    try:
+        conversation_id = request.POST.get('conversation_id')
+        user_type = request.POST.get('user_type')  # 'owner' or 'reporter'
+        share_info = request.POST.get('share_info') == 'true'
+        
+        try:
+            conversation = Conversation.objects.get(id=conversation_id)
+            
+            if user_type == 'owner':
+                conversation.owner_share_info = share_info
+            elif user_type == 'reporter':
+                conversation.reporter_share_info = share_info
+            else:
+                return JsonResponse({
+                    'success': False,
+                    'message': 'Invalid user type'
+                }, status=400)
+                
+            conversation.save()
+            
+            if conversation.owner_share_info and conversation.reporter_share_info:
+                send_contact_info_emails(conversation)
+            
+            return JsonResponse({
+                'success': True,
+                'message': 'Sharing preference updated successfully'
+            })
+            
+        except Conversation.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'Conversation not found'
+            }, status=404)
+            
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'message': f'An error occurred: {str(e)}'
+        }, status=500)
+
+def send_contact_info_emails(conversation):
+    pet = conversation.pet_location.pet
+    owner = pet.owner
+    
+    owner_subject = f"Contact Information for {conversation.reporter_name}"
+    owner_message = f"""
+    Hello {owner.username},
+    
+    {conversation.reporter_name} has agreed to share their contact information with you:
+    
+    Email: {conversation.reporter_email}
+    
+    You can now contact them directly.
+    
+    Best regards,
+    PawGle Support Team
+    """
+    
+    reporter_subject = f"Contact Information for {pet.name}'s Owner"
+    reporter_message = f"""
+    Hello {conversation.reporter_name},
+    
+    The owner of {pet.name} has agreed to share their contact information with you:
+    
+    Name: {owner.username}
+    Email: {owner.email}
+    
+    You can now contact them directly.
+    
+    Best regards,
+    PawGle Support Team
+    """
+    
+    send_mail(
+        subject=owner_subject,
+        message=owner_message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[owner.email]
+    )
+    
+    send_mail(
+        subject=reporter_subject,
+        message=reporter_message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[conversation.reporter_email]
+    )
+
+def forward_email(msg, conversation_id):
+    try:
+        conversation = Conversation.objects.get(id=uuid.UUID(conversation_id))
+        pet_owner_email = conversation.pet_location.pet.owner.email
+        reporter_email = conversation.reporter_email
+        
+        sender_email = msg.get("From")
+        
+        # Determine recipient based on sender
+        if pet_owner_email.lower() in sender_email.lower():
+            # Owner replied, forward to reporter
+            recipient_email = reporter_email
+            recipient_name = conversation.reporter_name
+            new_subject = f"Re: [PawGle-{conversation_id}] Update about the pet you reported"
+            sender_type = "owner"
+        else:
+            # Reporter replied, forward to owner
+            recipient_email = pet_owner_email
+            recipient_name = conversation.pet_location.pet.owner.username
+            new_subject = f"Re: [PawGle-{conversation_id}] Update about your pet"
+            sender_type = "reporter"
+        
+        # Extract body properly handling multipart messages
+        original_body = ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                if content_type == "text/plain":
+                    original_body = part.get_payload(decode=True).decode()
+                    break
+        else:
+            # For non-multipart messages
+            original_body = msg.get_payload(decode=True).decode()
+        
+        # Clean up the message body to remove quoted text and signatures
+        cleaned_body = clean_message_body(original_body)
+        
+        # Create a well-formatted HTML email
+        html_body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PawGle Message</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333333;
+                    margin: 0;
+                    padding: 0;
+                }}
+                .container {{
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }}
+                .header {{
+                    background-color: #4a90e2;
+                    color: white;
+                    padding: 15px;
+                    border-radius: 5px 5px 0 0;
+                }}
+                .content {{
+                    background-color: #f9f9f9;
+                    padding: 20px;
+                    border-left: 1px solid #dddddd;
+                    border-right: 1px solid #dddddd;
+                }}
+                .message {{
+                    background-color: white;
+                    padding: 15px;
+                    border-radius: 5px;
+                    border: 1px solid #eeeeee;
+                    margin-bottom: 20px;
+                }}
+                .sharing-option {{
+                    background-color: #f0f7ff;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                    border: 1px solid #d0e3ff;
+                }}
+                .footer {{
+                    background-color: #f1f1f1;
+                    padding: 15px;
+                    border-radius: 0 0 5px 5px;
+                    font-size: 12px;
+                    color: #777777;
+                    border-left: 1px solid #dddddd;
+                    border-right: 1px solid #dddddd;
+                    border-bottom: 1px solid #dddddd;
+                }}
+                .button {{
+                    display: inline-block;
+                    padding: 10px 20px;
+                    background-color: #4a90e2;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 5px;
+                    font-weight: bold;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>PawGle Pet Communication</h2>
+                </div>
+                <div class="content">
+                    <p>Hello {recipient_name},</p>
+                    <p>You've received a new message regarding the pet:</p>
+                    
+                    <div class="message">
+                        {cleaned_body}
+                    </div>
+                    
+                    <p>To continue this conversation, simply reply to this email.</p>
+                    <p>Best regards,<br>PawGle Support Team</p>
+                </div>
+                <div class="footer">
+                    <p>This email was sent on {timezone.now().strftime("%A, %B %d, %Y, %I:%M %p")}.</p>
+                    <p>&copy; 2025 PawGle. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Plain text version
+        plain_body = f"""
+Hello {recipient_name},
+
+You've received a new message regarding the pet:
+
+{cleaned_body}
+
+WOULD YOU LIKE TO SHARE YOUR CONTACT INFORMATION?
+If you'd like to communicate directly with the {sender_type}, visit:
+{settings.SITE_URL}/share-contact/{conversation_id}/{sender_type}/yes
+
+To continue this conversation, simply reply to this email.
+
+Best regards,
+PawGle Support Team
+
+This email was sent on {timezone.now().strftime("%A, %B %d, %Y, %I:%M %p")}.
+© 2025 PawGle. All rights reserved.
+        """
+        
+        # Create and send the forwarded email
+        forward_email = EmailMultiAlternatives(
+            subject=new_subject,
+            body=plain_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[recipient_email],
+            reply_to=[settings.DEFAULT_FROM_EMAIL],
+            headers={
+                'X-Priority': '1',  # High priority to avoid spam
+                'X-MSMail-Priority': 'High',
+                'Importance': 'High'
+            }
+        )
+        
+        # Attach HTML version
+        forward_email.attach_alternative(html_body, "text/html")
+        
+        # Forward any attachments
+        for part in msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            if part.get('Content-Disposition') is None:
+                continue
+            
+            filename = part.get_filename()
+            if filename:
+                attachment_data = part.get_payload(decode=True)
+                forward_email.attach(filename, attachment_data, part.get_content_type())
+        
+        forward_email.send()
+        print(f'Forwarded email for conversation {conversation_id} to {recipient_email}')
+        
+    except Conversation.DoesNotExist:
+        print(f'Conversation {conversation_id} not found')
+    except Exception as e:
+        print(f'Error processing email: {str(e)}')
+
+def clean_message_body(body):
+    """
+    Clean up the message body to remove quoted text and signatures
+    """
+    # Split by lines
+    lines = body.splitlines()
+    
+    # Keep only the lines before the first quote marker (> or >>)
+    cleaned_lines = []
+    for line in lines:
+        if line.strip().startswith('>'):
+            break
+        cleaned_lines.append(line)
+    
+    # If we didn't find any content before quotes, use the original
+    if not cleaned_lines:
+        # Try to extract just the first part before any quoted content
+        import re
+        match = re.search(r'^(.*?)(?:On\s+.*?wrote:|From:.*?$)', body, re.DOTALL | re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+        return body.strip()
+    
+    return '\n'.join(cleaned_lines).strip()
+
+def share_contact(request, conversation_id, user_type, decision):
+    try:
+        conversation = Conversation.objects.get(id=conversation_id)
+        
+        if user_type == 'owner':
+            conversation.owner_share_info = (decision == 'yes')
+        elif user_type == 'reporter':
+            conversation.reporter_share_info = (decision == 'yes')
+        
+        conversation.save()
+        
+        # If both parties have agreed to share info, send emails with contact details
+        if conversation.owner_share_info and conversation.reporter_share_info:
+            send_contact_info_emails(conversation)
+        
+        return render(request, 'accounts/share_contact_confirmation.html', {
+            'decision': decision,
+            'conversation': conversation
+        })
+        
+    except Conversation.DoesNotExist:
+        return render(request, 'accounts/error.html', {
+            'message': 'Conversation not found'
+        })
+
+
+def check_emails():
+    print("Starting email check process...")
+    try:
+        mail = imaplib.IMAP4_SSL(settings.EMAIL_HOST)
+        mail.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
+        mail.select('inbox')
+        
+        print(f"Connected to {settings.EMAIL_HOST} successfully")
+        
+        status, messages = mail.search(None, 'UNSEEN')
+        print(f"Found {len(messages[0].split())} unread messages")
+        
+        for num in messages[0].split():
+            print(f"Processing message {num}")
+            _, msg_data = mail.fetch(num, '(RFC822)')
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    subject = decode_header(msg["Subject"])[0][0]
+                    if isinstance(subject, bytes):
+                        subject = subject.decode()
+                    
+                    print(f"Message subject: {subject}")
+                    
+                    if "[PawGle-" in subject:
+                        print("Found PawGle conversation ID in subject")
+                        try:
+                            conversation_id = subject.split("[PawGle-")[1].split("]")[0]
+                            print(f"Extracted conversation ID: {conversation_id}")
+                            forward_email(msg, conversation_id)
+                        except Exception as e:
+                            print(f"Error extracting conversation ID: {str(e)}")
+                    else:
+                        print("No PawGle conversation ID found in subject")
+        
+        mail.close()
+        mail.logout()
+        print("Email check completed")
+        
+    except Exception as e:
+        print(f"Error checking emails: {str(e)}")

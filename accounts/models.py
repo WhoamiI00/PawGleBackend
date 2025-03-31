@@ -216,3 +216,15 @@ class Notification(models.Model):
     description = models.TextField(blank=True)
     target = models.ForeignKey(Pet, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
+
+class Conversation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pet_location = models.ForeignKey(PetLocation, on_delete=models.CASCADE, related_name='conversations')
+    reporter_email = models.EmailField()
+    reporter_name = models.CharField(max_length=100)
+    owner_share_info = models.BooleanField(default=False)
+    reporter_share_info = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"Conversation {self.id} - {self.pet_location.pet.name}"

@@ -38,9 +38,9 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'ankit62878@gmail.com'  # Replace with your Gmail
-EMAIL_HOST_PASSWORD = 'ntbd bbus psvy uyis'  # You'll generate this in step 3
-DEFAULT_FROM_EMAIL = 'PawGle Support <ankit62878@gmail.com>'
+EMAIL_HOST_USER = 'pawgle.proxy@gmail.com'
+EMAIL_HOST_PASSWORD = 'rnfl iwbi xocn pdln'
+DEFAULT_FROM_EMAIL = 'PawGle Support <pawgle.proxy@gmail.com>'
 
 INSTALLED_APPS = [
     'django.contrib.admin',

@@ -8,18 +8,13 @@ from rest_framework.views import APIView
 from .models import Pet, Conversation
 from rest_framework.parsers import MultiPartParser, FormParser
 import json
-import cv2
 import os
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils.timezone import now
-import numpy as np
 from datetime import datetime
 from .storage import SupabaseStorage
 import tempfile
-    
-# Import the new feature extraction functions
-from models.predict import extract_features, compare_features
 
 def authenticate_user_by_email(email, password):
     try:
@@ -310,12 +305,10 @@ from rest_framework.views import APIView
 from .models import Pet, Conversation
 from rest_framework.parsers import MultiPartParser, FormParser
 import json
-import cv2
 import os
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils.timezone import now
-import numpy as np
 from datetime import datetime
 from .storage import SupabaseStorage
 import tempfile

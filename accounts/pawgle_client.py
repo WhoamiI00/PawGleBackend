@@ -101,21 +101,22 @@ class PawgleAPIClient:
                     # Generate a deterministic feature vector based on the image path
                     # This ensures the same image always gets the same features
                     import hashlib
-                    import numpy as np
-                    
+                    import random
+                    import math
+
                     # Create a hash of the image file
                     with open(input_path, 'rb') as f:
                         file_hash = hashlib.md5(f.read()).hexdigest()
-                    
+
                     # Use the hash to seed a random number generator
-                    np.random.seed(int(file_hash[:8], 16))
-                    
-                    # Generate a feature vector (512 dimensions is common for face embeddings)
-                    mock_features = list(np.random.normal(0, 0.1, 512))
-                    
-                    # Normalize the vector to unit length (common for embeddings)
-                    norm = np.linalg.norm(mock_features)
-                    mock_features = [float(f/norm) for f in mock_features]
+                    rng = random.Random(int(file_hash[:8], 16))
+
+                    # Generate a feature vector (512 dimensions)
+                    mock_features = [rng.gauss(0, 0.1) for _ in range(512)]
+
+                    # Normalize the vector to unit length
+                    norm = math.sqrt(sum(f * f for f in mock_features))
+                    mock_features = [f / norm for f in mock_features]
                     
                     logger.info(f"Generated fallback feature vector with {len(mock_features)} dimensions")
                     

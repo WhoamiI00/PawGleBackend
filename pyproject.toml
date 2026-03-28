@@ -19,4 +19,5 @@ dependencies = [
     "gradio>=5.38.0",
     "gradio-client>=1.11.0",
     "requests>=2.32.3",
+    "gunicorn>=25.3.0",
 ]

@@ -1,4 +1,4 @@
-from gradio_client import Client
+from gradio_client import Client, handle_file
 import os
 from django.conf import settings
 import tempfile
@@ -26,7 +26,7 @@ class HuggingFaceSpaceClient:
         try:
             # Use your Space's classification endpoint to process the image
             result = self.client.predict(
-                image_input=image_path,
+                image_input=handle_file(image_path),
                 api_name="/predict"  # Uses your classification tab
             )
             
@@ -53,8 +53,8 @@ class HuggingFaceSpaceClient:
             
         try:
             result = self.client.predict(
-                image1_input=image1_path,
-                image2_input=image2_path,
+                image1_input=handle_file(image1_path),
+                image2_input=handle_file(image2_path),
                 api_name="/predict_1"  # Uses your image similarity tab
             )
             

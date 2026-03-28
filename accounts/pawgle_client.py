@@ -1,6 +1,6 @@
 import io
 from PIL import Image
-from gradio_client import Client
+from gradio_client import Client, handle_file
 import logging
 import json
 import tempfile
@@ -82,7 +82,7 @@ class PawgleAPIClient:
             try:
                 # Make sure this API name matches exactly what's in your app.py
                 result = self.client.predict(
-                    input_path,
+                    handle_file(input_path),
                     api_name="/extract_features_api"  # This must match your Gradio app
                 )
                 
@@ -216,7 +216,7 @@ class PawgleAPIClient:
             
             # Call classification API
             result = self.client.predict(
-                input_path,
+                handle_file(input_path),
                 api_name="/classify_image"  # This should match your Gradio app
             )
             
@@ -268,8 +268,8 @@ class PawgleAPIClient:
                 return None, "Invalid second image type"
             
             result = self.client.predict(
-                input_path1,
-                input_path2,
+                handle_file(input_path1),
+                handle_file(input_path2),
                 api_name="/compare_images"
             )
             

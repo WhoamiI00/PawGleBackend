@@ -1,8 +1,12 @@
 /venv
 venv/
+/.venv
+.venv/
 /media
 media/
 /venv_ubuntu
 venv_ubuntu/
 .env
 ./.env
+__pycache__/
+*.pyc

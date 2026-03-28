@@ -1,0 +1,22 @@
+[project]
+name = "animal-backend"
+version = "0.1.0"
+description = "PawGle - Django backend for animal identification"
+requires-python = ">=3.10"
+dependencies = [
+    "django>=5.1.5",
+    "djangorestframework>=3.15.2",
+    "djangorestframework-simplejwt>=5.4.0",
+    "django-cors-headers>=4.6.0",
+    "dj-database-url>=3.0.1",
+    "python-dotenv>=1.1.1",
+    "psycopg2-binary>=2.9.10",
+    "supabase>=2.20.0",
+    "pillow>=11.1.0",
+    "opencv-python>=4.11.0.86",
+    "tensorflow>=2.18.0",
+    "numpy>=2.0.2",
+    "gradio>=5.38.0",
+    "gradio-client>=1.11.0",
+    "requests>=2.32.3",
+]

@@ -653,53 +653,57 @@ class SearchPetView(APIView):
                 similarity_threshold = 0.3  # Adjustable threshold
                 
                 for sim_result in similarities:
-                    similarity_score = sim_result['similarity']
-                    index = sim_result['index']
+                    similarity_score = sim_result.get('similarity', sim_result.get('similarity_score', 0))
+                    index = sim_result.get('index', 0)
                     
                     if similarity_score > similarity_threshold and index < len(valid_pets):
                         pet = valid_pets[index]
                         location = valid_pet_locations[index]
                         
                         if pet:  # This is a registered pet
-                            results.append({
-                                'type': 'registered_pet',
-                                'pet_id': pet.id,
-                                'name': pet.name,
-                                'pet_type': pet.type,
-                                'breed': pet.breed,
-                                'image_url': pet.image.url if pet.image else None,
-                                'similarity_score': round(similarity_score, 4),
-                                'owner_contact': pet.owner.email if pet.share_contact_info else None,
-                                'ai_classification': getattr(pet, 'ai_classification', 'Unknown'),
-                                'similarity_level': (
-                                    'High' if similarity_score > 0.8 else
-                                    'Medium' if similarity_score > 0.5 else
-                                    'Low'
-                                )
-                            })
+                            result_entry = {
+                                'pet': {
+                                    'id': pet.id,
+                                    'name': pet.name,
+                                    'type': pet.type,
+                                    'breed': pet.breed,
+                                    'images': pet.images or [],
+                                },
+                                'similarity': round(similarity_score, 4),
+                                'pet_location': None,
+                            }
+                            # Check if there's a related pet location
+                            pet_loc = PetLocation.objects.filter(pet=pet).first()
+                            if pet_loc:
+                                result_entry['pet_location'] = {
+                                    'id': pet_loc.id,
+                                    'status': pet_loc.status,
+                                    'latitude': pet_loc.latitude,
+                                    'longitude': pet_loc.longitude,
+                                    'image_url': pet_loc.image.url if pet_loc.image else None,
+                                }
+                            results.append(result_entry)
                         elif location:  # This is a pet location report
                             results.append({
-                                'type': 'pet_location',
-                                'location_id': location.id,
-                                'name': location.pet_name if location.pet_name else 'Unknown',
-                                'pet_type': location.pet_type,
-                                'breed': location.pet_breed,
-                                'status': location.status,
-                                'reported_at': location.reported_at,
-                                'image_url': location.image.url if location.image else None,
-                                'similarity_score': round(similarity_score, 4),
-                                'contact_name': location.contact_name,
-                                'contact_email': location.contact_email,
-                                'contact_phone': location.contact_phone,
-                                'similarity_level': (
-                                    'High' if similarity_score > 0.8 else
-                                    'Medium' if similarity_score > 0.5 else
-                                    'Low'
-                                )
+                                'pet': {
+                                    'id': location.id,
+                                    'name': location.pet_name or 'Unknown',
+                                    'type': location.pet_type,
+                                    'breed': location.pet_breed,
+                                    'images': [],
+                                },
+                                'similarity': round(similarity_score, 4),
+                                'pet_location': {
+                                    'id': location.id,
+                                    'status': location.status,
+                                    'latitude': location.latitude,
+                                    'longitude': location.longitude,
+                                    'image_url': location.image.url if location.image else None,
+                                },
                             })
 
                 # Sort by similarity (highest first) and limit results
-                results = sorted(results, key=lambda x: x['similarity_score'], reverse=True)[:10]  # Top 10 matches
+                results = sorted(results, key=lambda x: x['similarity'], reverse=True)[:10]  # Top 10 matches
 
                 logger.info(f"Found {len(results)} matches above threshold {similarity_threshold}")
 

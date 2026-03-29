@@ -297,15 +297,25 @@ class RegisterView(views.APIView):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            user.is_active = False
-            user.save()
 
-            self._send_verification_email(user)
-
-            return Response({
-                'message': 'Account created. Please check your email to verify your account.',
-                'user': UserSerializer(user).data,
-            }, status=status.HTTP_201_CREATED)
+            # Try sending verification email; if it fails, activate user directly
+            try:
+                user.is_active = False
+                user.save()
+                self._send_verification_email(user)
+                return Response({
+                    'message': 'Account created. Please check your email to verify your account.',
+                    'user': UserSerializer(user).data,
+                }, status=status.HTTP_201_CREATED)
+            except Exception:
+                user.is_active = True
+                user.save()
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    'user': UserSerializer(user).data,
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -437,8 +447,10 @@ class LoginView(views.APIView):
         user = authenticate_user_by_email(email=email, password=password)
 
         if user:
+            # Auto-activate unverified users until email service is ready
             if not user.is_active:
-                return Response({"detail": "Please verify your email before logging in."}, status=status.HTTP_403_FORBIDDEN)
+                user.is_active = True
+                user.save()
             refresh = RefreshToken.for_user(user)
             return Response({
                 'refresh': str(refresh),

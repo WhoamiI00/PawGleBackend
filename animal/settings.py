@@ -63,9 +63,9 @@ MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_NAME}/'
 # Remove local media root since we're using Supabase
 # MEDIA_ROOT is not needed when using custom storage backend
 
-# Email configuration - using Mailtrap HTTP API
-EMAIL_BACKEND = 'accounts.email_backend.MailtrapAPIBackend'
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'PawGle <no-reply@neokit.app>')
+# Email configuration - using Resend HTTP API
+EMAIL_BACKEND = 'accounts.email_backend.ResendEmailBackend'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'PawGle <onboarding@resend.dev>')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -108,7 +108,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 ROOT_URLCONF = 'animal.urls'
 
-SITE_URL = 'https://paw-gle-frontend.vercel.app'  # Replace with your actual site URL
+SITE_URL = 'http://localhost:3000'  # Replace with your actual site URL
 
 TEMPLATES = [
     {

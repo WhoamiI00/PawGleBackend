@@ -3,9 +3,10 @@ from django.contrib import admin
 from .views import (
     ListPetLocationsView, ListLostPetsView, ListFoundPetsView,
     ReportPetLocationView, MarkPetStatusView, UserPetLocationsView,
-    # Include your existing views here
     RegisterView, LoginView, ProfileView, AddPetView, PublicPetDashboardView, EditedPetImageViewSet,
-    DeletePetView, SearchPetView, EditPetView, GetPetCountView, GetUserCountView, contact_pet_owner,toggle_share_contact_info,share_contact
+    DeletePetView, SearchPetView, EditPetView, GetPetCountView, GetUserCountView, contact_pet_owner,
+    toggle_share_contact_info, share_contact,
+    VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
 )
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
@@ -26,6 +27,10 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path('signup/', RegisterView.as_view(), name='signup'),
     path('login/', LoginView.as_view(), name='login'),
+    path('verify-email/', VerifyEmailView.as_view(), name='verify_email'),
+    path('resend-verification/', ResendVerificationView.as_view(), name='resend_verification'),
+    path('forgot-password/', ForgotPasswordView.as_view(), name='forgot_password'),
+    path('reset-password/', ResetPasswordView.as_view(), name='reset_password'),
     path('profile/', ProfileView.as_view(), name='profile'),
     path('pets/add/', AddPetView.as_view(), name='add_pet'), 
     path('pets/search/', SearchPetView.as_view(), name='search_pet'), 

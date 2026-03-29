@@ -65,12 +65,12 @@ MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_NAME}/'
 
 # Email configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'live.smtp.mailtrap.io')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'lelouch.vi.britannia6287@gmail.com'
-EMAIL_HOST_PASSWORD = 'wsdt khgy wknd hhrj'
-DEFAULT_FROM_EMAIL = 'PawGle Support <lelouch.vi.britannia6287@gmail.com>'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'PawGle <no-reply@neokit.app>')
 
 INSTALLED_APPS = [
     'django.contrib.admin',

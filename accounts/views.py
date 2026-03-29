@@ -15,6 +15,10 @@ from django.utils.timezone import now
 from datetime import datetime
 from .storage import SupabaseStorage
 import tempfile
+from django.core.mail import send_mail
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
 
 def authenticate_user_by_email(email, password):
     try:
@@ -24,46 +28,6 @@ def authenticate_user_by_email(email, password):
     except get_user_model().DoesNotExist:
         return None
 
-class RegisterView(views.APIView):
-    def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            refresh = RefreshToken.for_user(user)
-
-            return Response({
-                'user': UserSerializer(user).data,
-                'refresh': str(refresh),
-                'access': str(refresh.access_token)
-            }, status=status.HTTP_201_CREATED)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-class LoginView(views.APIView):
-    def post(self, request):
-        email = request.data.get('email')  
-        password = request.data.get('password')
-
-        user = authenticate_user_by_email(email=email, password=password)
-
-        if user:
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token)
-            }, status=status.HTTP_200_OK)
-        return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-
-class ProfileView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        user = request.user
-        pets = Pet.objects.filter(owner=user)
-        return Response({
-            'user': UserSerializer(user).data,
-            'pets': PetSerializer(pets, many=True).data
-        })
 
 
 # class AddPetView(APIView):
@@ -333,30 +297,155 @@ class RegisterView(views.APIView):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            refresh = RefreshToken.for_user(user)
+            user.is_active = False
+            user.save()
+
+            self._send_verification_email(user)
 
             return Response({
+                'message': 'Account created. Please check your email to verify your account.',
                 'user': UserSerializer(user).data,
-                'refresh': str(refresh),
-                'access': str(refresh.access_token)
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    def _send_verification_email(self, user):
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        verify_link = f"{frontend_url}/verify-email?uid={uid}&token={token}"
+
+        send_mail(
+            subject='PawGle - Verify your email',
+            message=f'Hi {user.username},\n\nPlease verify your email by clicking the link below:\n\n{verify_link}\n\nThis link will expire in 24 hours.\n\nThanks,\nPawGle Team',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+
+
+class VerifyEmailView(views.APIView):
+    def get(self, request):
+        uid = request.query_params.get('uid')
+        token = request.query_params.get('token')
+
+        if not uid or not token:
+            return Response({'error': 'Missing uid or token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = get_user_model().objects.get(pk=user_id)
+        except (TypeError, ValueError, OverflowError, get_user_model().DoesNotExist):
+            return Response({'error': 'Invalid verification link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if default_token_generator.check_token(user, token):
+            user.is_active = True
+            user.save()
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'message': 'Email verified successfully.',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ResendVerificationView(views.APIView):
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = get_user_model().objects.get(email=email)
+        except get_user_model().DoesNotExist:
+            return Response({'message': 'If an account with that email exists, a verification email has been sent.'})
+
+        if user.is_active:
+            return Response({'message': 'Account is already verified.'})
+
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        verify_link = f"{frontend_url}/verify-email?uid={uid}&token={token}"
+
+        send_mail(
+            subject='PawGle - Verify your email',
+            message=f'Hi {user.username},\n\nPlease verify your email by clicking the link below:\n\n{verify_link}\n\nThis link will expire in 24 hours.\n\nThanks,\nPawGle Team',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+        return Response({'message': 'If an account with that email exists, a verification email has been sent.'})
+
+
+class ForgotPasswordView(views.APIView):
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = get_user_model().objects.get(email=email)
+        except get_user_model().DoesNotExist:
+            return Response({'message': 'If an account with that email exists, a password reset link has been sent.'})
+
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        reset_link = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+        send_mail(
+            subject='PawGle - Reset your password',
+            message=f'Hi {user.username},\n\nYou requested a password reset. Click the link below:\n\n{reset_link}\n\nIf you did not request this, please ignore this email.\n\nThanks,\nPawGle Team',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+        return Response({'message': 'If an account with that email exists, a password reset link has been sent.'})
+
+
+class ResetPasswordView(views.APIView):
+    def post(self, request):
+        uid = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+
+        if not uid or not token or not new_password:
+            return Response({'error': 'uid, token, and new_password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = get_user_model().objects.get(pk=user_id)
+        except (TypeError, ValueError, OverflowError, get_user_model().DoesNotExist):
+            return Response({'error': 'Invalid reset link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if default_token_generator.check_token(user, token):
+            user.set_password(new_password)
+            user.save()
+            return Response({'message': 'Password reset successfully.'})
+        else:
+            return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class LoginView(views.APIView):
     def post(self, request):
-        email = request.data.get('email')  
+        email = request.data.get('email')
         password = request.data.get('password')
 
         user = authenticate_user_by_email(email=email, password=password)
 
         if user:
+            if not user.is_active:
+                return Response({"detail": "Please verify your email before logging in."}, status=status.HTTP_403_FORBIDDEN)
             refresh = RefreshToken.for_user(user)
             return Response({
                 'refresh': str(refresh),
                 'access': str(refresh.access_token)
             }, status=status.HTTP_200_OK)
         return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
 
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]

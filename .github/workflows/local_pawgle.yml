@@ -3,7 +3,7 @@ name: Build and deploy Python app to Azure Web App - pawgle
 on:
   push:
     branches:
-      - master
+      - local
   workflow_dispatch:
 
 jobs:

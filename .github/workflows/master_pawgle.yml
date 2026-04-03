@@ -68,4 +68,4 @@ jobs:
         uses: azure/cli@v2
         with:
           inlineScript: |
-            az webapp config set --resource-group pawgle_group --name pawgle --startup-file "python manage.py migrate --noinput && python manage.py qcluster & gunicorn animal.wsgi --bind=0.0.0.0 --timeout 600 -w 1"
+            az webapp config set --resource-group pawgle_group --name pawgle --startup-file "bash startup.sh"

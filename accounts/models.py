@@ -284,6 +284,7 @@ class Notification(models.Model):
     verb = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     target = models.ForeignKey(Pet, on_delete=models.CASCADE, null=True, blank=True)
+    is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Conversation(models.Model):

@@ -167,6 +167,16 @@ class ReportPetLocationSerializer(serializers.Serializer):
         
         return pet_location
 
+class NotificationSerializer(serializers.ModelSerializer):
+    target_name = serializers.CharField(source='target.name', read_only=True, default=None)
+    target_id = serializers.IntegerField(source='target.id', read_only=True, default=None)
+
+    class Meta:
+        model = Notification
+        fields = ['id', 'verb', 'description', 'target_id', 'target_name', 'is_read', 'created_at']
+        read_only_fields = ['id', 'verb', 'description', 'target_id', 'target_name', 'created_at']
+
+
 from rest_framework import serializers
 from .models import EditedPetImage
 

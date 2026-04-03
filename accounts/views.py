@@ -504,42 +504,57 @@ class AddPetView(APIView):
                 pet_data['additionalInfo'] = {}
                 logger.warning(f"Invalid additionalInfo, using empty dict: {str(e)}")
 
-            # Handle image upload - check multiple possible keys
-            image_file = None
+            # Parse existing images (kept from previous pet during edit-as-recreate flow)
+            existing_images = []
+            try:
+                existing_images = json.loads(request.data.get('existing_images', '[]'))
+                if not isinstance(existing_images, list):
+                    existing_images = []
+            except (json.JSONDecodeError, TypeError):
+                existing_images = []
+
+            # Handle new image uploads
+            new_image_urls = []
             possible_image_keys = ['image', 'images', 'file', 'files', 'pet_image']
+            uploaded_files = []
 
             for key in possible_image_keys:
                 if key in request.FILES:
-                    files = request.FILES.getlist(key)
-                    if files and len(files) > 0:
-                        image_file = files[0]
+                    uploaded_files = request.FILES.getlist(key)
+                    if uploaded_files:
                         break
 
-            if not image_file:
+            allowed_types = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            supabase_storage = SupabaseStorage()
+
+            for image_file in uploaded_files:
+                if image_file.size > 10 * 1024 * 1024:
+                    return Response({'error': 'Image file too large (max 10MB)'}, status=status.HTTP_400_BAD_REQUEST)
+
+                file_extension = os.path.splitext(image_file.name)[1].lower()
+                if file_extension not in allowed_types:
+                    return Response({
+                        'error': f'Invalid file type. Allowed types: {", ".join(allowed_types)}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+                filename = f"user_{request.user.id}_{timestamp}{file_extension}"
+
+                try:
+                    saved_name = supabase_storage._save(filename, image_file)
+                    image_url = supabase_storage.url(saved_name)
+                    new_image_urls.append(image_url)
+                except Exception as e:
+                    logger.error(f"Failed to save image to Supabase: {e}")
+                    return Response({'error': 'Failed to save image'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Combine existing + new images
+            all_images = existing_images + new_image_urls
+
+            if not all_images:
                 return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
 
-            if image_file.size > 10 * 1024 * 1024:
-                return Response({'error': 'Image file too large (max 10MB)'}, status=status.HTTP_400_BAD_REQUEST)
-
-            allowed_types = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-            file_extension = os.path.splitext(image_file.name)[1].lower()
-            if file_extension not in allowed_types:
-                return Response({
-                    'error': f'Invalid file type. Allowed types: {", ".join(allowed_types)}'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Save image to Supabase
-            supabase_storage = SupabaseStorage()
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            filename = f"user_{request.user.id}_{timestamp}{file_extension}"
-
-            try:
-                saved_name = supabase_storage._save(filename, image_file)
-                image_url = supabase_storage.url(saved_name)
-                pet_data['images'] = [image_url]
-            except Exception as e:
-                logger.error(f"Failed to save image to Supabase: {e}")
-                return Response({'error': 'Failed to save image'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            pet_data['images'] = all_images
 
             # Save pet immediately with pending feature status
             pet_data['features'] = []
@@ -912,6 +927,46 @@ class GetUserCountView(APIView):
             return Response({"user_count": user_count}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+from .models import Notification
+from .serializers import NotificationSerializer
+
+
+class NotificationListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        notifications = Notification.objects.filter(
+            recipient=request.user
+        ).order_by('-created_at')[:50]
+        serializer = NotificationSerializer(notifications, many=True)
+        unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
+        return Response({
+            'notifications': serializer.data,
+            'unread_count': unread_count,
+        }, status=status.HTTP_200_OK)
+
+
+class MarkNotificationReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, notification_id):
+        try:
+            notification = Notification.objects.get(id=notification_id, recipient=request.user)
+            notification.is_read = True
+            notification.save(update_fields=['is_read'])
+            return Response({"detail": "Marked as read"}, status=status.HTTP_200_OK)
+        except Notification.DoesNotExist:
+            return Response({"detail": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MarkAllNotificationsReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        return Response({"detail": "All notifications marked as read"}, status=status.HTTP_200_OK)
+
 
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response

@@ -8,6 +8,7 @@ from .views import (
     toggle_share_contact_info, share_contact,
     VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
     FeatureStatusView, RetryFeaturesView,
+    NotificationListView, MarkNotificationReadView, MarkAllNotificationsReadView,
 )
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
@@ -53,6 +54,9 @@ urlpatterns = [
     path('pets/contact-owner/', contact_pet_owner, name='contact_pet_owner'),
     path('api/auth/conversations/share-info/', toggle_share_contact_info, name='toggle_share_contact_info'),
     path('share-contact/<uuid:conversation_id>/<str:user_type>/<str:decision>/', share_contact, name='share_contact'),   
+    path('notifications/', NotificationListView.as_view(), name='notifications'),
+    path('notifications/<int:notification_id>/read/', MarkNotificationReadView.as_view(), name='mark_notification_read'),
+    path('notifications/read-all/', MarkAllNotificationsReadView.as_view(), name='mark_all_notifications_read'),
     path('edited-pet-images/', edited_pet_image_list, name='edited_pet_image_list'),
     path('edited-pet-images/<int:pk>/', edited_pet_image_detail, name='edited_pet_image_detail'),
 ]

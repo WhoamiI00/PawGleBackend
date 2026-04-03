@@ -121,7 +121,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 ROOT_URLCONF = 'animal.urls'
 
-SITE_URL = 'http://localhost:3000'  # Replace with your actual site URL
+SITE_URL = 'https://pawgle.neokit.app'  # Replace with your actual site URL
 
 TEMPLATES = [
     {

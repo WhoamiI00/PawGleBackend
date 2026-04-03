@@ -71,4 +71,4 @@ jobs:
         uses: azure/cli@v2
         with:
           inlineScript: |
-            az webapp config set --resource-group pawgle_group --name pawgle --startup-file "gunicorn --bind=0.0.0.0 --timeout 600 animal.wsgi"
+            az webapp config set --resource-group pawgle_group --name pawgle --startup-file "bash startup.sh"

@@ -476,15 +476,12 @@ class AddPetView(APIView):
 
     def post(self, request):
         try:
-            logger.info(f"Request data keys: {list(request.data.keys())}")
-            logger.info(f"Request FILES keys: {list(request.FILES.keys())}")
-            
             # Prepare base pet data
             pet_data = {
-                'owner': request.user.id,  # Make sure to include the owner
+                'owner': request.user.id,
                 'name': request.data.get('name'),
                 'category': request.data.get('category'),
-                'type': request.data.get('type'),  # Make sure this matches your model field
+                'type': request.data.get('type'),
                 'breed': request.data.get('breed'),
                 'isPublic': request.data.get('isPublic', 'false').lower() == 'true',
             }
@@ -510,24 +507,20 @@ class AddPetView(APIView):
             # Handle image upload - check multiple possible keys
             image_file = None
             possible_image_keys = ['image', 'images', 'file', 'files', 'pet_image']
-            
+
             for key in possible_image_keys:
                 if key in request.FILES:
                     files = request.FILES.getlist(key)
                     if files and len(files) > 0:
-                        image_file = files[0]  # Take the first image
-                        logger.info(f"Found image with key: {key}, size: {image_file.size} bytes")
+                        image_file = files[0]
                         break
-            
+
             if not image_file:
-                logger.error(f"No image found in request. Available keys: {list(request.FILES.keys())}")
                 return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Validate image
-            if image_file.size > 10 * 1024 * 1024:  # 10MB limit
+            if image_file.size > 10 * 1024 * 1024:
                 return Response({'error': 'Image file too large (max 10MB)'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Check file type
             allowed_types = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
             file_extension = os.path.splitext(image_file.name)[1].lower()
             if file_extension not in allowed_types:
@@ -535,114 +528,35 @@ class AddPetView(APIView):
                     'error': f'Invalid file type. Allowed types: {", ".join(allowed_types)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Save image to Supabase first
+            # Save image to Supabase
             supabase_storage = SupabaseStorage()
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             filename = f"user_{request.user.id}_{timestamp}{file_extension}"
-            
+
             try:
                 saved_name = supabase_storage._save(filename, image_file)
                 image_url = supabase_storage.url(saved_name)
-                logger.info(f"Image saved to Supabase: {image_url}")
-                
-                # Store as list of URLs (as per your model)
                 pet_data['images'] = [image_url]
-                
             except Exception as e:
                 logger.error(f"Failed to save image to Supabase: {e}")
                 return Response({'error': 'Failed to save image'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            # Create temporary file for HF Space processing
-            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
-                image_file.seek(0)
-                temp_file.write(image_file.read())
-                temp_path = temp_file.name
-
-            features_extracted = False
-            classification_result = "Processing failed"
-            
-            try:
-                logger.info("Processing image with HF Space API...")
-                
-                # Test the connection first
-                try:
-                    test_client = pawgle_client.client
-                    logger.info("HF Space client connection successful")
-                except Exception as conn_error:
-                    logger.error(f"HF Space connection failed: {conn_error}")
-                    # Continue without features rather than failing the entire request
-                    pet_data['features'] = []
-                    pet_data['additionalInfo']['ai_classification'] = f"Connection failed: {str(conn_error)}"
-                    features_extracted = False
-                    classification_result = f"Connection failed: {str(conn_error)}"
-                
-                if not features_extracted:
-                    # Extract features using the improved HF Space API
-                    logger.info("Attempting feature extraction...")
-                    features, feature_message = pawgle_client.extract_features(temp_path)
-                    
-                    if features:
-                        pet_data['features'] = [features]  # Store as list of feature arrays
-                        logger.info(f"✓ Features extracted successfully: {len(features)} dimensions")
-                        features_extracted = True
-                    else:
-                        logger.warning(f"Feature extraction failed: {feature_message}")
-                        pet_data['features'] = []
-                    
-                    # Classify the pet
-                    logger.info("Attempting pet classification...")
-                    classification, class_message = pawgle_client.classify_pet(temp_path)
-                    
-                    if classification:
-                        # Store classification in additionalInfo
-                        pet_data['additionalInfo']['ai_classification'] = classification
-                        logger.info(f"Pet classified as: {classification}")
-                        classification_result = classification
-                    else:
-                        logger.warning(f"Classification failed: {class_message}")
-                        pet_data['additionalInfo']['ai_classification'] = "Classification unavailable"
-                        classification_result = "Classification unavailable"
-
-            except Exception as e:
-                logger.error(f"HF Space API error: {e}")
-                pet_data['features'] = []
-                pet_data['additionalInfo']['ai_classification'] = f"Processing error: {str(e)}"
-                classification_result = f"Processing error: {str(e)}"
-            
-            finally:
-                # Clean up temporary file
-                try:
-                    os.unlink(temp_path)
-                    logger.info("Cleaned up temporary file")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
-
-            # Validate and save pet
-            logger.info("Saving pet to database...")
+            # Save pet immediately with pending feature status
+            pet_data['features'] = []
             serializer = PetSerializer(data=pet_data, context={'request': request})
             if serializer.is_valid():
                 pet = serializer.save()
-                
-                response_data = {
+
+                # Dispatch background feature extraction
+                from django_q.tasks import async_task
+                async_task('accounts.tasks.extract_pet_features', pet.id)
+                logger.info(f"Pet {pet.id} saved, feature extraction queued")
+
+                return Response({
                     'success': True,
                     'pet': serializer.data,
-                    'processing_results': {
-                        'features_extracted': features_extracted,
-                        'feature_dimensions': len(pet.features[0]) if pet.features and len(pet.features) > 0 else 0,
-                        'classification': classification_result,
-                        'image_url': image_url,
-                        'image_saved': True,
-                        'debug_info': {
-                            'pet_id': pet.id,
-                            'animal_id': pet.animal_id,
-                            'features_count': len(pet.features) if pet.features else 0
-                        }
-                    },
-                    'message': 'Pet added successfully'
-                }
-                
-                logger.info(f"✓ Pet saved successfully with ID: {pet.id}")
-                return Response(response_data, status=status.HTTP_201_CREATED)
+                    'message': 'Pet added successfully. Features are being extracted in the background.'
+                }, status=status.HTTP_201_CREATED)
             else:
                 logger.error(f"Serializer errors: {serializer.errors}")
                 return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
@@ -655,27 +569,24 @@ class AddPetView(APIView):
 class SearchPetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
-    
+
     def post(self, request):
         try:
-            # Get the uploaded search image
             if 'image' not in request.FILES:
                 return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
-            
+
             image_file = request.FILES['image']
             logger.info("Starting pet search with uploaded image")
-            
-            # Save search image temporarily
+
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
                 image_file.seek(0)
                 temp_file.write(image_file.read())
                 search_image_path = temp_file.name
-            
+
             try:
-                # Extract features from search image using HF Space
-                logger.info("Extracting features from search image...")
+                # Extract features from search image (synchronous - user is waiting)
                 search_features, message = pawgle_client.extract_features(search_image_path)
-                
+
                 if not search_features:
                     return Response({
                         'error': f'Failed to extract features from search image: {message}'
@@ -683,78 +594,110 @@ class SearchPetView(APIView):
 
                 logger.info(f"Search image features extracted: {len(search_features)} dimensions")
 
-                # Get all pets with features from database
-                all_pets = Pet.objects.exclude(features__isnull=True).exclude(features=[])
-                logger.info(f"Found {all_pets.count()} pets with features in database")
-                
-                # Get all pet locations with features
-                all_pet_locations = PetLocation.objects.exclude(features__isnull=True).exclude(features=[])
-                logger.info(f"Found {all_pet_locations.count()} pet locations with features")
-                
-                if all_pets.count() == 0 and all_pet_locations.count() == 0:
-                    return Response({
-                        'success': True,
-                        'results': [],
-                        'message': 'No pets or pet locations with features found in database'
-                    })
+                # Group A: pets/locations WITH pre-extracted features (fast comparison)
+                pets_with_features = list(
+                    Pet.objects.filter(feature_status='completed').exclude(features=[])
+                )
+                locations_with_features = list(
+                    PetLocation.objects.filter(feature_status='completed').exclude(features=[])
+                )
 
-                # Prepare database features for batch comparison
-                pet_list = list(all_pets)
-                pet_location_list = list(all_pet_locations)
+                # Group B: pets WITHOUT features (need on-the-fly extraction)
+                pets_without_features = list(
+                    Pet.objects.exclude(feature_status='completed').exclude(images=[])
+                )
+                locations_without_features = list(
+                    PetLocation.objects.exclude(feature_status='completed').filter(image__isnull=False).exclude(image='')
+                )
+
+                # Build Group A database features
                 database_features = []
                 valid_pets = []
                 valid_pet_locations = []
-                
-                # Add registered pets features
-                for pet in pet_list:
+
+                for pet in pets_with_features:
                     if pet.features and isinstance(pet.features, list) and len(pet.features) > 0:
                         database_features.append(pet.features[0] if isinstance(pet.features[0], list) else pet.features)
                         valid_pets.append(pet)
                         valid_pet_locations.append(None)
-                    else:
-                        logger.debug(f"Pet {pet.id} has invalid features: {type(pet.features)}")
-                
-                # Add pet location features
-                for location in pet_location_list:
+
+                for location in locations_with_features:
                     if location.features and isinstance(location.features, list) and len(location.features) > 0:
                         database_features.append(location.features)
                         valid_pets.append(None)
                         valid_pet_locations.append(location)
-                    else:
-                        logger.debug(f"Pet location {location.id} has invalid features: {type(location.features)}")
+
+                # Group B: extract features on-the-fly (capped at 10 to avoid latency)
+                import requests as http_requests
+                group_b_count = len(pets_without_features) + len(locations_without_features)
+                skipped_pending = max(0, group_b_count - 10)
+                group_b_pets = pets_without_features[:10]
+                remaining_slots = 10 - len(group_b_pets)
+                group_b_locations = locations_without_features[:remaining_slots] if remaining_slots > 0 else []
+
+                for pet in group_b_pets:
+                    try:
+                        if not pet.images:
+                            continue
+                        resp = http_requests.get(pet.images[0], timeout=10)
+                        resp.raise_for_status()
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                            tmp.write(resp.content)
+                            tmp_path = tmp.name
+                        features, _ = pawgle_client.extract_features(tmp_path)
+                        os.unlink(tmp_path)
+                        if features:
+                            database_features.append(features)
+                            valid_pets.append(pet)
+                            valid_pet_locations.append(None)
+                    except Exception as e:
+                        logger.warning(f"Group B feature extraction failed for pet {pet.id}: {e}")
+
+                for location in group_b_locations:
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                            location.image.seek(0)
+                            tmp.write(location.image.read())
+                            tmp_path = tmp.name
+                        features, _ = pawgle_client.extract_features(tmp_path)
+                        os.unlink(tmp_path)
+                        if features:
+                            database_features.append(features)
+                            valid_pets.append(None)
+                            valid_pet_locations.append(location)
+                    except Exception as e:
+                        logger.warning(f"Group B feature extraction failed for location {location.id}: {e}")
 
                 if not database_features:
                     return Response({
                         'success': True,
                         'results': [],
-                        'message': 'No valid features found in database'
+                        'message': 'No pets with features found in database'
                     })
 
-                logger.info(f"Comparing with {len(database_features)} valid feature sets")
+                logger.info(f"Comparing with {len(database_features)} feature sets")
 
-                # Use batch comparison API for efficiency
                 similarities, comparison_message = pawgle_client.batch_compare_features(
                     search_features, database_features
                 )
-                
+
                 if similarities is None:
                     return Response({
                         'error': f'Feature comparison failed: {comparison_message}'
                     }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-                # Process results
                 results = []
-                similarity_threshold = 0.3  # Adjustable threshold
-                
+                similarity_threshold = 0.3
+
                 for sim_result in similarities:
                     similarity_score = sim_result.get('similarity', sim_result.get('similarity_score', 0))
                     index = sim_result.get('index', 0)
-                    
+
                     if similarity_score > similarity_threshold and index < len(valid_pets):
                         pet = valid_pets[index]
                         location = valid_pet_locations[index]
-                        
-                        if pet:  # This is a registered pet
+
+                        if pet:
                             result_entry = {
                                 'pet': {
                                     'id': pet.id,
@@ -766,7 +709,6 @@ class SearchPetView(APIView):
                                 'similarity': round(similarity_score, 4),
                                 'pet_location': None,
                             }
-                            # Check if there's a related pet location
                             pet_loc = PetLocation.objects.filter(pet=pet).first()
                             if pet_loc:
                                 result_entry['pet_location'] = {
@@ -777,7 +719,7 @@ class SearchPetView(APIView):
                                     'image_url': pet_loc.image.url if pet_loc.image else None,
                                 }
                             results.append(result_entry)
-                        elif location:  # This is a pet location report
+                        elif location:
                             results.append({
                                 'pet': {
                                     'id': location.id,
@@ -796,10 +738,7 @@ class SearchPetView(APIView):
                                 },
                             })
 
-                # Sort by similarity (highest first) and limit results
-                results = sorted(results, key=lambda x: x['similarity'], reverse=True)[:10]  # Top 10 matches
-
-                logger.info(f"Found {len(results)} matches above threshold {similarity_threshold}")
+                results = sorted(results, key=lambda x: x['similarity'], reverse=True)[:10]
 
                 return Response({
                     'success': True,
@@ -808,18 +747,19 @@ class SearchPetView(APIView):
                         'total_items_searched': len(database_features),
                         'matches_found': len(results),
                         'similarity_threshold': similarity_threshold,
-                        'search_feature_dimensions': len(search_features)
+                        'search_feature_dimensions': len(search_features),
+                        'pending_features_count': group_b_count,
+                        'skipped_pending_count': skipped_pending,
                     },
                     'message': f'Found {len(results)} similar pets'
                 })
-                
+
             finally:
-                # Clean up search image temp file
                 try:
                     os.unlink(search_image_path)
                 except:
                     pass
-            
+
         except Exception as e:
             logger.error(f"Error in SearchPetView: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -844,53 +784,41 @@ class DeletePetView(APIView):
 
 class EditPetView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def put(self, request, pet_id):
         try:
             pet = Pet.objects.get(id=pet_id, owner=request.user)
         except Pet.DoesNotExist:
             return Response({"detail": "Pet not found or not owned by this user."}, status=status.HTTP_404_NOT_FOUND)
 
-        # If a new image is uploaded, re-extract features
+        re_extract = False
+
         if 'image' in request.FILES:
             image_file = request.FILES['image']
-            
-            # Update image storage
+
             supabase_storage = SupabaseStorage()
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             file_extension = os.path.splitext(image_file.name)[1].lower()
             filename = f"user_{request.user.id}_{timestamp}{file_extension}"
-            
-            saved_name = supabase_storage._save(filename, image_file)
-            request.data['image'] = saved_name
-            
-            # Re-extract features for new image
-            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
-                image_file.seek(0)
-                temp_file.write(image_file.read())
-                temp_path = temp_file.name
 
-            try:
-                features, _ = pawgle_client.extract_features(temp_path)
-                classification, _ = pawgle_client.classify_pet(temp_path)
-                
-                if features:
-                    request.data['features'] = features
-                if classification:
-                    request.data['ai_classification'] = classification
-                    
-            except Exception as e:
-                logger.error(f"Error re-extracting features: {e}")
-            finally:
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
+            saved_name = supabase_storage._save(filename, image_file)
+            image_url = supabase_storage.url(saved_name)
+            request.data['images'] = [image_url]
+            re_extract = True
 
         serializer = PetSerializer(pet, data=request.data, partial=True)
 
         if serializer.is_valid():
-            serializer.save()
+            updated_pet = serializer.save()
+
+            if re_extract:
+                updated_pet.feature_status = 'pending'
+                updated_pet.features = []
+                updated_pet.save(update_fields=['feature_status', 'features'])
+
+                from django_q.tasks import async_task
+                async_task('accounts.tasks.extract_pet_features', updated_pet.id)
+
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -934,6 +862,41 @@ class DeletePetView(APIView):
         return Response({"detail": "Pet deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
 
     
+class FeatureStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pet_id):
+        try:
+            pet = Pet.objects.get(id=pet_id)
+            return Response({'feature_status': pet.feature_status}, status=status.HTTP_200_OK)
+        except Pet.DoesNotExist:
+            return Response({"detail": "Pet not found."}, status=status.HTTP_404_NOT_FOUND)
+
+
+class RetryFeaturesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pet_id):
+        try:
+            pet = Pet.objects.get(id=pet_id, owner=request.user)
+        except Pet.DoesNotExist:
+            return Response({"detail": "Pet not found or not owned by this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        if pet.feature_status != 'failed':
+            return Response(
+                {"detail": "Feature extraction can only be retried for failed pets."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        pet.feature_status = 'pending'
+        pet.save(update_fields=['feature_status'])
+
+        from django_q.tasks import async_task
+        async_task('accounts.tasks.extract_pet_features', pet.id)
+
+        return Response({"message": "Feature extraction re-queued"}, status=status.HTTP_200_OK)
+
+
 class GetPetCountView(APIView):
     def get(self, request):
         try:
@@ -997,12 +960,10 @@ class ReportPetLocationView(generics.CreateAPIView):
     serializer_class = ReportPetLocationSerializer
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
-    
+
     def post(self, request, *args, **kwargs):
-        # Get the pet_id from request data if it exists
         pet_id = request.data.get('pet_id')
-        
-        # Create context with request and pet if available
+
         context = {'request': request}
         if pet_id:
             try:
@@ -1013,60 +974,24 @@ class ReportPetLocationView(generics.CreateAPIView):
                     {"error": "Pet with provided ID does not exist"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-        
+
         serializer = self.serializer_class(
             data=request.data,
             context=context
         )
-        
+
         if serializer.is_valid():
             pet_location = serializer.save()
-            
-            # Extract features if image is provided
-            features_extracted = False
+
+            # Dispatch background feature extraction if image is provided
             if pet_location.image:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(f"Extracting features for pet location {pet_location.id}...")
-                
-                try:
-                    # Create temporary file for processing
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-                        pet_location.image.seek(0)
-                        temp_file.write(pet_location.image.read())
-                        temp_path = temp_file.name
-                    
-                    # Extract features using pawgle_client
-                    from .pawgle_client import pawgle_client
-                    features, feature_message = pawgle_client.extract_features(temp_path)
-                    
-                    if features:
-                        pet_location.features = features
-                        pet_location.save(update_fields=['features'])
-                        logger.info(f"Features extracted successfully for pet location {pet_location.id}")
-                        features_extracted = True
-                    else:
-                        logger.warning(f"Feature extraction failed for pet location {pet_location.id}: {feature_message}")
-                        
-                except Exception as e:
-                    logger.error(f"Error extracting features for pet location {pet_location.id}: {str(e)}")
-                    
-                finally:
-                    # Clean up temporary file
-                    try:
-                        os.unlink(temp_path)
-                    except Exception as cleanup_error:
-                        logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
-            
-            # Use context to ensure image URLs are absolute
+                from django_q.tasks import async_task
+                async_task('accounts.tasks.extract_location_features', pet_location.id)
+                logger.info(f"PetLocation {pet_location.id} saved, feature extraction queued")
+
             response_data = PetLocationSerializer(pet_location, context={'request': request}).data
-            response_data['features_extracted'] = features_extracted
-            
-            return Response(
-                response_data,
-                status=status.HTTP_201_CREATED
-            )
-        
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class MarkPetStatusView(APIView):

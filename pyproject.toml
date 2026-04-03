@@ -16,4 +16,6 @@ dependencies = [
     "gradio-client>=1.11.0",
     "requests>=2.32.3",
     "gunicorn>=25.3.0",
+    "django-q2>=1.7.5",
+    "setuptools>=70.0",
 ]

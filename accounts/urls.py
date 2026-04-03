@@ -7,6 +7,7 @@ from .views import (
     DeletePetView, SearchPetView, EditPetView, GetPetCountView, GetUserCountView, contact_pet_owner,
     toggle_share_contact_info, share_contact,
     VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
+    FeatureStatusView, RetryFeaturesView,
 )
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
@@ -37,6 +38,8 @@ urlpatterns = [
     path('dashboard/pets/', PublicPetDashboardView.as_view(), name='public_pet_dashboard'),
     path('pets/<int:pet_id>/delete/', DeletePetView.as_view(), name='delete_pet'),
     path('pets/<int:pet_id>/edit/', EditPetView.as_view(), name='edit_pet'),
+    path('pets/<int:pet_id>/feature-status/', FeatureStatusView.as_view(), name='feature_status'),
+    path('pets/<int:pet_id>/retry-features/', RetryFeaturesView.as_view(), name='retry_features'),
     path('pets/count/', GetPetCountView.as_view(), name='get_pet_count'),  
     path('users/count/', GetUserCountView.as_view(), name='get_user_count'),
     

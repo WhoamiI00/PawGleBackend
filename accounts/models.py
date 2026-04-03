@@ -20,6 +20,13 @@ def validate_json_list(value):
         raise ValueError("Must be a list")
     json.dumps(value)  # Test JSON serialization
 
+FEATURE_STATUS_CHOICES = [
+    ('pending', 'Pending'),
+    ('processing', 'Processing'),
+    ('completed', 'Completed'),
+    ('failed', 'Failed'),
+]
+
 class Pet(models.Model):
     CATEGORY_CHOICES = [
         ('Domestic', 'Domestic'),
@@ -82,6 +89,12 @@ class Pet(models.Model):
         validators=[validate_json_list]
     )
     
+    # Feature extraction status
+    feature_status = models.CharField(
+        max_length=20, choices=FEATURE_STATUS_CHOICES, default='pending',
+        db_index=True
+    )
+
     # System-managed fields
     isPublic = models.BooleanField(default=False)
     owner = models.ForeignKey(
@@ -183,51 +196,6 @@ class PetLocation(models.Model):
     # Contact information
     contact_name = models.CharField(max_length=100, blank=True)
     
-    # Feature extraction data
-    features = models.JSONField(null=True, blank=True)
-    
-    def extract_and_store_features(self):
-        """Extract features from the pet location image and store them"""
-        if not self.image:
-            return False
-            
-        from .pawgle_client import pawgle_client
-        import tempfile
-        import os
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        
-        # Create temporary file for processing
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-            self.image.seek(0)
-            temp_file.write(self.image.read())
-            temp_path = temp_file.name
-        
-        try:
-            # Extract features using the HF Space API
-            logger.info(f"Extracting features for pet location {self.id}...")
-            features, feature_message = pawgle_client.extract_features(temp_path)
-            
-            if features:
-                self.features = features
-                self.save(update_fields=['features'])
-                logger.info(f"Features extracted successfully for pet location {self.id}")
-                return True
-            else:
-                logger.warning(f"Feature extraction failed for pet location {self.id}: {feature_message}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error extracting features for pet location {self.id}: {str(e)}")
-            return False
-            
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_path)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
     contact_phone = models.CharField(max_length=20, blank=True)
     contact_email = models.EmailField(blank=True)
     
@@ -244,9 +212,15 @@ class PetLocation(models.Model):
         help_text="Pet image stored in Supabase"
     )
     
-    # Add features field for image recognition
+    # Feature extraction data
     features = models.JSONField(default=list, validators=[validate_json_list])
-    
+
+    # Feature extraction status
+    feature_status = models.CharField(
+        max_length=20, choices=FEATURE_STATUS_CHOICES, default='pending',
+        db_index=True
+    )
+
     # Add field to track if this is a user's current location
     is_user_location = models.BooleanField(default=False)
     
@@ -283,42 +257,6 @@ class PetLocation(models.Model):
         self.pet = pet
         self.save()
     
-    def extract_and_store_features(self):
-        """Extract features from the image and store them"""
-        if not self.image:
-            return False
-            
-        try:
-            import tempfile
-            import os
-            from accounts.pawgle_client import pawgle_client
-            
-            # Download the image from Supabase to a temporary file
-            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-                # Read the image data from Supabase storage
-                image_content = self.image.read()
-                temp_file.write(image_content)
-                temp_file.flush()
-                
-                # Extract features using the pawgle client
-                features, message = pawgle_client.extract_features(temp_file.name)
-                
-                if features:
-                    self.features = features
-                    self.save(update_fields=['features'])
-                    # Clean up temporary file
-                    os.unlink(temp_file.name)
-                    return True
-                else:
-                    print(f"Feature extraction failed: {message}")
-                    # Clean up temporary file
-                    os.unlink(temp_file.name)
-                    return False
-                    
-        except Exception as e:
-            print(f"Error extracting features: {str(e)}")
-            return False
-    
     def to_map_marker(self, request=None):
         """Convert to a format suitable for map markers"""
         marker = {
@@ -338,14 +276,6 @@ class PetLocation(models.Model):
         
         return marker
     
-    def save(self, *args, **kwargs):
-        # Call the original save method
-        super().save(*args, **kwargs)
-        
-        # Extract features if image exists and features are empty
-        if self.image and not self.features:
-            self.extract_and_store_features()
-
 class Notification(models.Model):
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -353,7 +283,7 @@ class Notification(models.Model):
     )
     verb = models.CharField(max_length=255)
     description = models.TextField(blank=True)
-    target = models.ForeignKey(Pet, on_delete=models.CASCADE)
+    target = models.ForeignKey(Pet, on_delete=models.CASCADE, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Conversation(models.Model):

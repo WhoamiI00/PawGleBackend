@@ -34,11 +34,11 @@ class PetSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pet
         fields = [
-            'id', 'name', 'type', 'category', 'breed', 'isPublic', 
-            'additionalInfo', 'animal_id', 'registered_at', 
-            'images', 'features', 'owner'
+            'id', 'name', 'type', 'category', 'breed', 'isPublic',
+            'additionalInfo', 'animal_id', 'registered_at',
+            'images', 'features', 'feature_status', 'owner'
         ]
-        read_only_fields = ['animal_id', 'registered_at', 'owner']
+        read_only_fields = ['animal_id', 'registered_at', 'owner', 'feature_status']
 
     def create(self, validated_data):
         # Set the owner to the current user
@@ -69,10 +69,10 @@ class PetLocationSerializer(serializers.ModelSerializer):
             'id', 'pet', 'latitude', 'longitude', 'status', 'description',
             'reported_at', 'resolved_at', 'contact_name', 'contact_phone',
             'contact_email', 'last_seen_date', 'last_seen_time',
-            'animal_name', 'animal_id', 'type', 'breed', 'category', 
-            'owner_name', 'image', 'image_url'
+            'animal_name', 'animal_id', 'type', 'breed', 'category',
+            'owner_name', 'image', 'image_url', 'feature_status'
         ]
-        read_only_fields = ['reported_at', 'resolved_at']
+        read_only_fields = ['reported_at', 'resolved_at', 'feature_status']
     
     def get_image_url(self, obj):
         if obj.image:
@@ -155,12 +155,6 @@ class ReportPetLocationSerializer(serializers.Serializer):
             last_seen_time=validated_data.get('last_seen_time'),
             image=validated_data.get('image')
         )
-        
-        # Extract features if image is provided
-        if validated_data.get('image'):
-            success = pet_location.extract_and_store_features()
-            if not success:
-                print(f"Warning: Could not extract features for pet location {pet_location.id}")
         
         # Create notification if this is a lost pet report
         if pet and validated_data['status'] == 'lost':

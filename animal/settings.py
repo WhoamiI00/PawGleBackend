@@ -78,7 +78,20 @@ INSTALLED_APPS = [
     'accounts',
     'rest_framework_simplejwt',
     'corsheaders',
+    'django_q',
 ]
+
+Q_CLUSTER = {
+    'name': 'pawgle',
+    'workers': 1,
+    'recycle': 50,
+    'timeout': 180,
+    'retry': 300,
+    'orm': 'default',
+    'bulk': 10,
+    'queue_limit': 50,
+    'catch_up': False,
+}
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [

@@ -66,6 +66,8 @@ MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_NAME}/'
 # Email configuration - using Resend HTTP API
 EMAIL_BACKEND = 'accounts.email_backend.ResendEmailBackend'
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'PawGle <onboarding@resend.dev>')
+REPLIES_EMAIL = os.getenv('REPLIES_EMAIL', 'PawGle Replies <replies@neokit.app>')
+FORWARD_REPLY_SECRET = os.getenv('FORWARD_REPLY_SECRET', '')
 
 INSTALLED_APPS = [
     'django.contrib.admin',

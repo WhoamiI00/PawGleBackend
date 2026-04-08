@@ -1193,9 +1193,6 @@ from django.conf import settings
 from django.utils import timezone
 from .models import PetLocation, Conversation, Notification, Pet
 from email.mime.image import MIMEImage
-import imaplib
-import email
-from email.header import decode_header
 import uuid
 
 @require_POST
@@ -1354,9 +1351,9 @@ def contact_pet_owner(request):
             msg = EmailMultiAlternatives(
                 subject=subject,
                 body=plain_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email=settings.REPLIES_EMAIL,
                 to=[recipient_email],
-                reply_to=[settings.DEFAULT_FROM_EMAIL]
+                reply_to=[settings.REPLIES_EMAIL]
             )
             
             msg.attach_alternative(html_message, "text/html")
@@ -1496,147 +1493,118 @@ def send_contact_info_emails(conversation):
         recipient_list=[conversation.reporter_email]
     )
 
-def forward_email(msg, conversation_id):
+def _extract_email_address(raw):
+    """Extract the email portion from a 'Name <email>' string or list/dict."""
+    if not raw:
+        return ""
+    if isinstance(raw, list) and raw:
+        raw = raw[0]
+    if isinstance(raw, dict):
+        raw = raw.get("email") or raw.get("address") or ""
+    if not isinstance(raw, str):
+        return ""
+    import re
+    match = re.search(r'<([^>]+)>', raw)
+    if match:
+        return match.group(1).strip().lower()
+    return raw.strip().lower()
+
+
+def forward_conversation_reply(payload):
+    """Forward an inbound email reply to the other party in the conversation.
+
+    payload is a dict from the Resend webhook with keys:
+        from, to, subject, text, html, attachments (optional)
+    Returns (success: bool, message: str).
+    """
+    import re
+
+    subject = payload.get("subject", "") or ""
+    match = re.search(r'\[PawGle-([0-9a-fA-F-]+)\]', subject)
+    if not match:
+        return False, "No conversation ID in subject"
+
+    conversation_id = match.group(1)
+
     try:
         conversation = Conversation.objects.get(id=uuid.UUID(conversation_id))
-        pet_owner_email = conversation.pet_location.pet.owner.email
-        reporter_email = conversation.reporter_email
-        
-        sender_email = msg.get("From")
-        
-        # Determine recipient based on sender
-        if pet_owner_email.lower() in sender_email.lower():
-            # Owner replied, forward to reporter
-            recipient_email = reporter_email
-            recipient_name = conversation.reporter_name
-            new_subject = f"Re: [PawGle-{conversation_id}] Update about the pet you reported"
-            sender_type = "owner"
-        else:
-            # Reporter replied, forward to owner
-            recipient_email = pet_owner_email
-            recipient_name = conversation.pet_location.pet.owner.username
-            new_subject = f"Re: [PawGle-{conversation_id}] Update about your pet"
-            sender_type = "reporter"
-        
-        # Extract body properly handling multipart messages
-        original_body = ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                content_type = part.get_content_type()
-                if content_type == "text/plain":
-                    original_body = part.get_payload(decode=True).decode()
-                    break
-        else:
-            # For non-multipart messages
-            original_body = msg.get_payload(decode=True).decode()
-        
-        # Clean up the message body to remove quoted text and signatures
-        cleaned_body = clean_message_body(original_body)
-        
-        # Create a well-formatted HTML email
-        html_body = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>PawGle Message</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    line-height: 1.6;
-                    color: #333333;
-                    margin: 0;
-                    padding: 0;
-                }}
-                .container {{
-                    max-width: 600px;
-                    margin: 0 auto;
-                    padding: 20px;
-                }}
-                .header {{
-                    background-color: #4a90e2;
-                    color: white;
-                    padding: 15px;
-                    border-radius: 5px 5px 0 0;
-                }}
-                .content {{
-                    background-color: #f9f9f9;
-                    padding: 20px;
-                    border-left: 1px solid #dddddd;
-                    border-right: 1px solid #dddddd;
-                }}
-                .message {{
-                    background-color: white;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border: 1px solid #eeeeee;
-                    margin-bottom: 20px;
-                }}
-                .sharing-option {{
-                    background-color: #f0f7ff;
-                    padding: 15px;
-                    border-radius: 5px;
-                    margin: 20px 0;
-                    border: 1px solid #d0e3ff;
-                }}
-                .footer {{
-                    background-color: #f1f1f1;
-                    padding: 15px;
-                    border-radius: 0 0 5px 5px;
-                    font-size: 12px;
-                    color: #777777;
-                    border-left: 1px solid #dddddd;
-                    border-right: 1px solid #dddddd;
-                    border-bottom: 1px solid #dddddd;
-                }}
-                .button {{
-                    display: inline-block;
-                    padding: 10px 20px;
-                    background-color: #4a90e2;
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 5px;
-                    font-weight: bold;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h2>PawGle Pet Communication</h2>
-                </div>
-                <div class="content">
-                    <p>Hello {recipient_name},</p>
-                    <p>You've received a new message regarding the pet:</p>
-                    
-                    <div class="message">
-                        {cleaned_body}
-                    </div>
-                    
-                    <p>To continue this conversation, simply reply to this email.</p>
-                    <p>Best regards,<br>PawGle Support Team</p>
-                </div>
-                <div class="footer">
-                    <p>This email was sent on {timezone.now().strftime("%A, %B %d, %Y, %I:%M %p")}.</p>
-                    <p>&copy; 2025 PawGle. All rights reserved.</p>
-                </div>
+    except (Conversation.DoesNotExist, ValueError):
+        return False, f"Conversation {conversation_id} not found"
+
+    if not conversation.pet_location.pet:
+        return False, "Conversation has no linked pet"
+
+    pet_owner_email = (conversation.pet_location.pet.owner.email or "").lower()
+    reporter_email = (conversation.reporter_email or "").lower()
+    sender_email = _extract_email_address(payload.get("from"))
+
+    if not sender_email:
+        return False, "Could not extract sender email"
+
+    # Determine recipient based on sender
+    if sender_email == pet_owner_email:
+        recipient_email = conversation.reporter_email
+        recipient_name = conversation.reporter_name
+        new_subject = f"Re: [PawGle-{conversation_id}] Update about the pet you reported"
+        sender_type = "owner"
+    elif sender_email == reporter_email:
+        recipient_email = conversation.pet_location.pet.owner.email
+        recipient_name = conversation.pet_location.pet.owner.username
+        new_subject = f"Re: [PawGle-{conversation_id}] Update about your pet"
+        sender_type = "reporter"
+    else:
+        return False, f"Sender {sender_email} is not a party to this conversation"
+
+    # Prefer plain text from payload; fall back to stripping HTML
+    original_body = payload.get("text") or ""
+    if not original_body and payload.get("html"):
+        import re as _re
+        original_body = _re.sub(r'<[^>]+>', '', payload["html"])
+
+    cleaned_body = clean_message_body(original_body)
+
+    html_body = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>PawGle Message</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333333; margin: 0; padding: 0; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .header {{ background-color: #4a90e2; color: white; padding: 15px; border-radius: 5px 5px 0 0; }}
+            .content {{ background-color: #f9f9f9; padding: 20px; border-left: 1px solid #dddddd; border-right: 1px solid #dddddd; }}
+            .message {{ background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #eeeeee; margin-bottom: 20px; white-space: pre-wrap; }}
+            .footer {{ background-color: #f1f1f1; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; color: #777777; border-left: 1px solid #dddddd; border-right: 1px solid #dddddd; border-bottom: 1px solid #dddddd; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>PawGle Pet Communication</h2>
             </div>
-        </body>
-        </html>
-        """
-        
-        # Plain text version
-        plain_body = f"""
-Hello {recipient_name},
+            <div class="content">
+                <p>Hello {recipient_name},</p>
+                <p>You've received a new message regarding the pet:</p>
+                <div class="message">{cleaned_body}</div>
+                <p>To continue this conversation, simply reply to this email.</p>
+                <p>Best regards,<br>PawGle Support Team</p>
+            </div>
+            <div class="footer">
+                <p>This email was sent on {timezone.now().strftime("%A, %B %d, %Y, %I:%M %p")}.</p>
+                <p>&copy; 2025 PawGle. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    plain_body = f"""Hello {recipient_name},
 
 You've received a new message regarding the pet:
 
 {cleaned_body}
-
-WOULD YOU LIKE TO SHARE YOUR CONTACT INFORMATION?
-If you'd like to communicate directly with the {sender_type}, visit:
-{settings.SITE_URL}/share-contact/{conversation_id}/{sender_type}/yes
 
 To continue this conversation, simply reply to this email.
 
@@ -1644,45 +1612,41 @@ Best regards,
 PawGle Support Team
 
 This email was sent on {timezone.now().strftime("%A, %B %d, %Y, %I:%M %p")}.
-© 2025 PawGle. All rights reserved.
-        """
-        
-        # Create and send the forwarded email
-        forward_email = EmailMultiAlternatives(
-            subject=new_subject,
-            body=plain_body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[recipient_email],
-            reply_to=[settings.DEFAULT_FROM_EMAIL],
-            headers={
-                'X-Priority': '1',  # High priority to avoid spam
-                'X-MSMail-Priority': 'High',
-                'Importance': 'High'
-            }
-        )
-        
-        # Attach HTML version
-        forward_email.attach_alternative(html_body, "text/html")
-        
-        # Forward any attachments
-        for part in msg.walk():
-            if part.get_content_maintype() == 'multipart':
-                continue
-            if part.get('Content-Disposition') is None:
-                continue
-            
-            filename = part.get_filename()
-            if filename:
-                attachment_data = part.get_payload(decode=True)
-                forward_email.attach(filename, attachment_data, part.get_content_type())
-        
-        forward_email.send()
-        print(f'Forwarded email for conversation {conversation_id} to {recipient_email}')
-        
-    except Conversation.DoesNotExist:
-        print(f'Conversation {conversation_id} not found')
-    except Exception as e:
-        print(f'Error processing email: {str(e)}')
+"""
+
+    forward_msg = EmailMultiAlternatives(
+        subject=new_subject,
+        body=plain_body,
+        from_email=settings.REPLIES_EMAIL,
+        to=[recipient_email],
+        reply_to=[settings.REPLIES_EMAIL],
+        headers={
+            'X-Priority': '1',
+            'X-MSMail-Priority': 'High',
+            'Importance': 'High',
+        }
+    )
+    forward_msg.attach_alternative(html_body, "text/html")
+
+    # Forward attachments if present in payload
+    for attachment in payload.get("attachments") or []:
+        try:
+            filename = attachment.get("filename") or "attachment"
+            content = attachment.get("content") or ""
+            content_type = attachment.get("content_type") or attachment.get("contentType") or "application/octet-stream"
+            # Resend delivers inbound attachment content as base64
+            import base64
+            try:
+                decoded = base64.b64decode(content)
+            except Exception:
+                decoded = content.encode("utf-8") if isinstance(content, str) else content
+            forward_msg.attach(filename, decoded, content_type)
+        except Exception as e:
+            logger.warning(f"Failed to attach file: {e}")
+
+    forward_msg.send(fail_silently=False)
+    logger.info(f"Forwarded email for conversation {conversation_id} to {recipient_email}")
+    return True, "Forwarded"
 
 def clean_message_body(body):
     """
@@ -1709,6 +1673,37 @@ def clean_message_body(body):
     
     return '\n'.join(cleaned_lines).strip()
 
+@require_POST
+@csrf_exempt
+def forward_reply_webhook(request):
+    """Receive forwarded email replies from the Next.js inbound webhook proxy.
+
+    Protected by a shared secret header (X-Forward-Secret). The frontend verifies
+    the Resend signature first, then calls this endpoint with the parsed payload.
+    """
+    import hmac
+
+    expected_secret = settings.FORWARD_REPLY_SECRET or ""
+    provided_secret = request.headers.get("X-Forward-Secret", "")
+
+    if not expected_secret or not hmac.compare_digest(expected_secret, provided_secret):
+        return JsonResponse({"success": False, "error": "Unauthorized"}, status=401)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"success": False, "error": "Invalid JSON"}, status=400)
+
+    try:
+        success, message = forward_conversation_reply(payload)
+        if success:
+            return JsonResponse({"success": True, "message": message})
+        return JsonResponse({"success": False, "error": message}, status=400)
+    except Exception as e:
+        logger.error(f"Error in forward_reply_webhook: {e}")
+        return JsonResponse({"success": False, "error": "Internal error"}, status=500)
+
+
 def share_contact(request, conversation_id, user_type, decision):
     try:
         conversation = Conversation.objects.get(id=conversation_id)
@@ -1734,47 +1729,6 @@ def share_contact(request, conversation_id, user_type, decision):
             'message': 'Conversation not found'
         })
 
-def check_emails():
-    print("Starting email check process...")
-    try:
-        mail = imaplib.IMAP4_SSL(settings.EMAIL_HOST)
-        mail.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
-        mail.select('inbox')
-        
-        print(f"Connected to {settings.EMAIL_HOST} successfully")
-        
-        status, messages = mail.search(None, 'UNSEEN')
-        print(f"Found {len(messages[0].split())} unread messages")
-        
-        for num in messages[0].split():
-            print(f"Processing message {num}")
-            _, msg_data = mail.fetch(num, '(RFC822)')
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    subject = decode_header(msg["Subject"])[0][0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode()
-                    
-                    print(f"Message subject: {subject}")
-                    
-                    if "[PawGle-" in subject:
-                        print("Found PawGle conversation ID in subject")
-                        try:
-                            conversation_id = subject.split("[PawGle-")[1].split("]")[0]
-                            print(f"Extracted conversation ID: {conversation_id}")
-                            forward_email(msg, conversation_id)
-                        except Exception as e:
-                            print(f"Error extracting conversation ID: {str(e)}")
-                    else:
-                        print("No PawGle conversation ID found in subject")
-        
-        mail.close()
-        mail.logout()
-        print("Email check completed")
-        
-    except Exception as e:
-        print(f"Error checking emails: {str(e)}")
 
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response

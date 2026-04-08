@@ -9,6 +9,7 @@ from .views import (
     VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
     FeatureStatusView, RetryFeaturesView,
     NotificationListView, MarkNotificationReadView, MarkAllNotificationsReadView,
+    forward_reply_webhook,
 )
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
@@ -52,6 +53,7 @@ urlpatterns = [
     path('pets/locations/<int:location_id>/status/', MarkPetStatusView.as_view(), name='update_pet_status'),
     path('user/pet-locations/', UserPetLocationsView.as_view(), name='user_pet_locations'),
     path('pets/contact-owner/', contact_pet_owner, name='contact_pet_owner'),
+    path('email/forward-reply/', forward_reply_webhook, name='forward_reply_webhook'),
     path('api/auth/conversations/share-info/', toggle_share_contact_info, name='toggle_share_contact_info'),
     path('share-contact/<uuid:conversation_id>/<str:user_type>/<str:decision>/', share_contact, name='share_contact'),   
     path('notifications/', NotificationListView.as_view(), name='notifications'),

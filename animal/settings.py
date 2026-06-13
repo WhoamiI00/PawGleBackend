@@ -22,6 +22,7 @@ pymysql.install_as_MySQLdb()
 load_dotenv()
 
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

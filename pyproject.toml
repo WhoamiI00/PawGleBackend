@@ -20,4 +20,5 @@ dependencies = [
     "gunicorn>=25.3.0",
     "django-q2>=1.7.5",
     "setuptools>=70.0",
+    "google-auth>=2.54.0",
 ]

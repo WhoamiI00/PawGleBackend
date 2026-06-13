@@ -203,6 +203,72 @@ class LoginView(views.APIView):
         return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
 
+class GoogleLoginView(views.APIView):
+    """Sign in / sign up with a Google ID token from Google Identity Services."""
+    permission_classes = []
+
+    def post(self, request):
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+
+        token = request.data.get('credential') or request.data.get('id_token')
+        if not token:
+            return Response({'error': 'Missing Google credential.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not settings.GOOGLE_OAUTH_CLIENT_ID:
+            return Response({'error': 'Google OAuth not configured on server.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            info = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                settings.GOOGLE_OAUTH_CLIENT_ID,
+            )
+        except ValueError as e:
+            logger.warning(f"Google token verification failed: {e}")
+            return Response({'error': 'Invalid Google token.'},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        email = (info.get('email') or '').lower()
+        if not email or not info.get('email_verified'):
+            return Response({'error': 'Google account email is not verified.'},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        User = get_user_model()
+        user = User.objects.filter(email__iexact=email).first()
+        created = False
+        if user is None:
+            base_username = email.split('@')[0][:140] or 'user'
+            username = base_username
+            suffix = 1
+            while User.objects.filter(username=username).exists():
+                suffix += 1
+                username = f"{base_username}{suffix}"[:150]
+            user = User.objects.create(
+                username=username,
+                email=email,
+                first_name=info.get('given_name', '')[:150],
+                last_name=info.get('family_name', '')[:150],
+                is_active=True,
+            )
+            user.set_unusable_password()
+            user.save()
+            created = True
+        elif not user.is_active:
+            user.is_active = True
+            user.save(update_fields=['is_active'])
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'user': UserSerializer(user).data,
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'created': created,
+        }, status=status.HTTP_200_OK)
+
+
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 

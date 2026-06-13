@@ -13,33 +13,51 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
-# At the top of settings.py
-from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv() 
+# Register PyMySQL as MySQLdb so Django's mysql backend can use it
+import pymysql
+pymysql.install_as_MySQLdb()
 
-# Add these to your existing settings.py
+load_dotenv()
 
-# Supabase Configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_BUCKET_NAME = "images"
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
-HUGGINGFACE_API_TOKEN=os.getenv("HUGGINGFACE_API_TOKEN")
-user=os.getenv("user")
-password=os.getenv("password")
-host=os.getenv("host")
-# Change the BASE_DIR definition
+HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Database configuration with Supabase
-import dj_database_url
-
+# Database: TiDB Cloud (MySQL-compatible)
 DATABASES = {
-    'default': dj_database_url.parse(os.getenv("SUPABASE_DB_URL"))
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'HOST': os.getenv('TIDB_HOST'),
+        'PORT': os.getenv('TIDB_PORT', '4000'),
+        'USER': os.getenv('TIDB_USERNAME'),
+        'PASSWORD': os.getenv('TIDB_PASSWORD'),
+        'NAME': os.getenv('TIDB_DATABASE'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'ssl': {'ssl-mode': 'VERIFY_IDENTITY'},
+        },
+    }
 }
+
+# Cloudflare R2 (S3-compatible) storage
+AWS_ACCESS_KEY_ID = os.getenv('CLOUDFLARE_R2_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('CLOUDFLARE_R2_ACCESS_KEY')
+AWS_STORAGE_BUCKET_NAME = os.getenv('CLOUDFLARE_BUCKET_NAME', 'pawgle')
+# CLOUDFLARE_S3_API is the bucket-scoped endpoint; strip the bucket suffix for boto3
+_r2_endpoint = os.getenv('CLOUDFLARE_S3_API', '')
+if _r2_endpoint.endswith(f"/{AWS_STORAGE_BUCKET_NAME}"):
+    _r2_endpoint = _r2_endpoint[: -(len(AWS_STORAGE_BUCKET_NAME) + 1)]
+AWS_S3_ENDPOINT_URL = _r2_endpoint
+AWS_S3_REGION_NAME = 'auto'
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+AWS_S3_ADDRESSING_STYLE = 'path'
+AWS_DEFAULT_ACL = None
+AWS_QUERYSTRING_AUTH = False
+AWS_S3_FILE_OVERWRITE = False
+# Optional public URL (r2.dev or custom domain). If unset, signed URLs are returned.
+R2_PUBLIC_URL = os.getenv('R2_PUBLIC_URL', '')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -54,14 +72,11 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
 
-# File Storage Configuration - Use Supabase for all file storage
-DEFAULT_FILE_STORAGE = 'accounts.storage.SupabaseStorage'
+# File Storage Configuration - Cloudflare R2
+DEFAULT_FILE_STORAGE = 'accounts.storage.R2Storage'
 
-# Media settings for Supabase
-MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_NAME}/'
-
-# Remove local media root since we're using Supabase
-# MEDIA_ROOT is not needed when using custom storage backend
+# Media URL points at the public R2 base if configured; otherwise S3Boto3Storage signs URLs
+MEDIA_URL = (R2_PUBLIC_URL.rstrip('/') + '/') if R2_PUBLIC_URL else f'{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/'
 
 # Email configuration - using Resend HTTP API
 EMAIL_BACKEND = 'accounts.email_backend.ResendEmailBackend'
@@ -182,7 +197,7 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_field = 'django.db.models.BigAutoField'
 
-# Logging configuration for debugging Supabase storage issues
+# Logging configuration for debugging storage issues
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

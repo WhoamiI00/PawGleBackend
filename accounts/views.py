@@ -13,7 +13,7 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils.timezone import now
 from datetime import datetime
-from .storage import SupabaseStorage
+from .storage import R2Storage
 import tempfile
 from django.core.mail import send_mail
 from django.contrib.auth.tokens import default_token_generator
@@ -65,7 +65,7 @@ def authenticate_user_by_email(email, password):
 
 #             saved_image_urls = []
 #             all_features = []
-#             supabase_storage = SupabaseStorage()
+#             image_storage = R2Storage()
 
 #             for idx, image_file in enumerate(image_files):
 #                 try:
@@ -75,8 +75,8 @@ def authenticate_user_by_email(email, password):
 #                     filename = f"user_{request.user.id}_{timestamp}_{idx}{file_extension}"
 
 #                     # Save file to Supabase
-#                     saved_name = supabase_storage._save(filename, image_file)
-#                     image_url = supabase_storage.url(saved_name)
+#                     saved_name = image_storage._save(filename, image_file)
+#                     image_url = image_storage.url(saved_name)
 #                     saved_image_urls.append(image_url)
 
 #                     # Process image for feature extraction
@@ -274,7 +274,7 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils.timezone import now
 from datetime import datetime
-from .storage import SupabaseStorage
+from .storage import R2Storage
 import tempfile
 import logging
 from PIL import Image
@@ -525,7 +525,7 @@ class AddPetView(APIView):
                         break
 
             allowed_types = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-            supabase_storage = SupabaseStorage()
+            image_storage = R2Storage()
 
             for image_file in uploaded_files:
                 if image_file.size > 10 * 1024 * 1024:
@@ -541,8 +541,8 @@ class AddPetView(APIView):
                 filename = f"user_{request.user.id}_{timestamp}{file_extension}"
 
                 try:
-                    saved_name = supabase_storage._save(filename, image_file)
-                    image_url = supabase_storage.url(saved_name)
+                    saved_name = image_storage._save(filename, image_file)
+                    image_url = image_storage.url(saved_name)
                     new_image_urls.append(image_url)
                 except Exception as e:
                     logger.error(f"Failed to save image to Supabase: {e}")
@@ -811,13 +811,13 @@ class EditPetView(APIView):
         if 'image' in request.FILES:
             image_file = request.FILES['image']
 
-            supabase_storage = SupabaseStorage()
+            image_storage = R2Storage()
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             file_extension = os.path.splitext(image_file.name)[1].lower()
             filename = f"user_{request.user.id}_{timestamp}{file_extension}"
 
-            saved_name = supabase_storage._save(filename, image_file)
-            image_url = supabase_storage.url(saved_name)
+            saved_name = image_storage._save(filename, image_file)
+            image_url = image_storage.url(saved_name)
             request.data['images'] = [image_url]
             re_extract = True
 

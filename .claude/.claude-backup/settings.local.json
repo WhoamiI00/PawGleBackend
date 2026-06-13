@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /c/Users/ankit/Pictures/PawGle-master/ 2>&1 | head -30)",
+      "Read(//c/Users/ankit/Pictures/PawGle-master//**)",
+      "Read(//c/Users/ankit/Pictures/**)",
+      "Bash(mv AnimalBackend-master PawGle-master/AnimalBackend-master)",
+      "Bash(mv AnimalBackend-master/.claude /tmp/.claude-backup)",
+      "Bash(mv AnimalBackend-master/.git PawGle-master/AnimalBackend-master-tmp-git)"
+    ]
+  }
+}

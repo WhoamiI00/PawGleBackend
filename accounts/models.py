@@ -5,7 +5,7 @@ from django.core.validators import MinLengthValidator, RegexValidator, MinValueV
 import json
 import random
 import uuid
-from .storage import SupabaseStorage
+from .storage import R2Storage
 
 # Define validation functions outside the model
 def validate_json_dict(value):
@@ -82,7 +82,7 @@ class Pet(models.Model):
     images = models.JSONField(
         default=list,
         validators=[validate_json_list],
-        help_text="List of image URLs stored in Supabase"
+        help_text="List of image URLs stored in R2"
     )
     features = models.JSONField(
         default=list,
@@ -205,11 +205,11 @@ class PetLocation(models.Model):
     
     # Updated image field with proper Supabase storage
     image = models.ImageField(
-        storage=SupabaseStorage(),
+        storage=R2Storage(),
         upload_to='pets/',  # This will be handled by our custom storage
         null=True,
         blank=True,
-        help_text="Pet image stored in Supabase"
+        help_text="Pet image stored in R2"
     )
     
     # Feature extraction data
@@ -305,9 +305,9 @@ class Conversation(models.Model):
 
 class EditedPetImage(models.Model):
     edited_image = models.ImageField(
-        storage=SupabaseStorage(),
+        storage=R2Storage(),
         upload_to='edited_pets/',  # This will be handled by our custom storage
-        help_text="The edited image file stored in Supabase"
+        help_text="The edited image file stored in R2"
     )
     edit_metadata = models.JSONField(
         default=dict,

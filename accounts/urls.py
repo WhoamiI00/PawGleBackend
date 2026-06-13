@@ -1,9 +1,8 @@
 from django.urls import path
-from django.contrib import admin
 from .views import (
     ListPetLocationsView, ListLostPetsView, ListFoundPetsView,
     ReportPetLocationView, MarkPetStatusView, UserPetLocationsView,
-    RegisterView, LoginView, GoogleLoginView, ProfileView, AddPetView, PublicPetDashboardView, EditedPetImageViewSet,
+    RegisterView, LoginView, LogoutView, GoogleLoginView, ProfileView, AddPetView, PublicPetDashboardView, EditedPetImageViewSet,
     DeletePetView, SearchPetView, EditPetView, GetPetCountView, GetUserCountView, contact_pet_owner,
     toggle_share_contact_info, share_contact,
     VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
@@ -26,10 +25,10 @@ edited_pet_image_detail = EditedPetImageViewSet.as_view({
 
 urlpatterns = [
     # Your existing URLs
-    
-    path("admin/", admin.site.urls),
+
     path('signup/', RegisterView.as_view(), name='signup'),
     path('login/', LoginView.as_view(), name='login'),
+    path('logout/', LogoutView.as_view(), name='logout'),
     path('google/', GoogleLoginView.as_view(), name='google_login'),
     path('verify-email/', VerifyEmailView.as_view(), name='verify_email'),
     path('resend-verification/', ResendVerificationView.as_view(), name='resend_verification'),

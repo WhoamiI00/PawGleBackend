@@ -65,6 +65,14 @@ def extract_pet_features(pet_id, attempt=1):
         pet.save(update_fields=['features', 'feature_status', 'additionalInfo'])
         logger.info(f"Pet {pet_id} features extracted successfully")
 
+        # Mirror the embedding into Qdrant for fast similarity search.
+        # Failures here are logged inside qdrant_index and must not break the task.
+        try:
+            from . import qdrant_index
+            qdrant_index.upsert_pet(pet)
+        except Exception as e:
+            logger.error(f"Qdrant upsert for pet {pet_id} failed: {e}")
+
         # Create success notification
         Notification.objects.create(
             recipient=pet.owner,
@@ -149,6 +157,12 @@ def extract_location_features(pet_location_id, attempt=1):
             location.feature_status = 'completed'
             location.save(update_fields=['features', 'feature_status'])
             logger.info(f"PetLocation {pet_location_id} features extracted successfully")
+
+            try:
+                from . import qdrant_index
+                qdrant_index.upsert_report(location)
+            except Exception as e:
+                logger.error(f"Qdrant upsert for location {pet_location_id} failed: {e}")
         else:
             raise ValueError(f"Feature extraction failed: {feature_message}")
 

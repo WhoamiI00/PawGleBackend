@@ -21,4 +21,5 @@ dependencies = [
     "django-q2>=1.7.5",
     "setuptools>=70.0",
     "google-auth>=2.54.0",
+    "qdrant-client>=1.12.1",
 ]

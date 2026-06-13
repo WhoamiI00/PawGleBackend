@@ -24,6 +24,13 @@ load_dotenv()
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
 
+# Qdrant vector DB
+QDRANT_CLUSTER_ENDPOINT = os.getenv("QDRANT_CLUSTER_ENDPOINT", "")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+QDRANT_PETS_COLLECTION = os.getenv("QDRANT_PETS_COLLECTION", "pawgle_pets")
+QDRANT_REPORTS_COLLECTION = os.getenv("QDRANT_REPORTS_COLLECTION", "pawgle_reports")
+QDRANT_VECTOR_DIM = int(os.getenv("QDRANT_VECTOR_DIM", "512"))
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Database: TiDB Cloud (MySQL-compatible)
@@ -135,7 +142,28 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS: when sending credentials (httpOnly cookies) the browser refuses
+# wildcard origins. List the exact frontends that are allowed instead.
+# Comma-separated. In dev, both localhost forms cover Next.js and the IDE preview.
+_default_cors = "http://localhost:3000,http://127.0.0.1:3000"
+CORS_ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", _default_cors).split(",") if o.strip()
+]
+CORS_ALLOW_CREDENTIALS = True
+
+# CSRF: Django needs to know which origins are allowed to make state-changing
+# requests. Mirror the CORS list. Same env var works.
+CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+
+# Refresh token httpOnly cookie config.
+# In dev: SameSite=Lax, no Secure flag (localhost is http).
+# In prod (cross-site between *.azurewebsites.net and pawgle.neokit.app):
+#   set REFRESH_COOKIE_SECURE=true and REFRESH_COOKIE_SAMESITE=None via env.
+REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "pawgle_refresh")
+REFRESH_COOKIE_SECURE = os.getenv("REFRESH_COOKIE_SECURE", "false").lower() == "true"
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "Lax")
+REFRESH_COOKIE_DOMAIN = os.getenv("REFRESH_COOKIE_DOMAIN") or None  # None = host-only cookie
+REFRESH_COOKIE_PATH = os.getenv("REFRESH_COOKIE_PATH", "/")
 
 ROOT_URLCONF = 'animal.urls'
 

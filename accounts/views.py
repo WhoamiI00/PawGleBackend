@@ -3,9 +3,10 @@ from rest_framework import status, permissions, views
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import RegisterSerializer, UserSerializer, PetSerializer
-from rest_framework.permissions import IsAuthenticated
+from .cookie_auth import set_refresh_cookie, clear_refresh_cookie, issue_tokens_for
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
-from .models import Pet, Conversation
+from .models import Pet, PetLocation, Conversation
 from rest_framework.parsers import MultiPartParser, FormParser
 import json
 import os
@@ -54,12 +55,12 @@ class RegisterView(views.APIView):
             except Exception:
                 user.is_active = True
                 user.save()
-                refresh = RefreshToken.for_user(user)
-                return Response({
+                refresh, access = issue_tokens_for(user)
+                response = Response({
                     'user': UserSerializer(user).data,
-                    'refresh': str(refresh),
-                    'access': str(refresh.access_token),
+                    'access': access,
                 }, status=status.HTTP_201_CREATED)
+                return set_refresh_cookie(response, refresh)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -95,12 +96,12 @@ class VerifyEmailView(views.APIView):
         if default_token_generator.check_token(user, token):
             user.is_active = True
             user.save()
-            refresh = RefreshToken.for_user(user)
-            return Response({
+            refresh, access = issue_tokens_for(user)
+            response = Response({
                 'message': 'Email verified successfully.',
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
+                'access': access,
             }, status=status.HTTP_200_OK)
+            return set_refresh_cookie(response, refresh)
         else:
             return Response({'error': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -195,12 +196,51 @@ class LoginView(views.APIView):
             if not user.is_active:
                 user.is_active = True
                 user.save()
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token)
-            }, status=status.HTTP_200_OK)
+            refresh, access = issue_tokens_for(user)
+            response = Response({'access': access}, status=status.HTTP_200_OK)
+            return set_refresh_cookie(response, refresh)
         return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+class CookieTokenRefreshView(views.APIView):
+    """Refresh the access token using the httpOnly refresh cookie.
+
+    The frontend never sees the refresh token. It just calls this endpoint
+    with `withCredentials: true` and gets a new short-lived access token back.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if not raw:
+            return Response(
+                {"detail": "No refresh token cookie."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            refresh = RefreshToken(raw)
+        except Exception:
+            response = Response(
+                {"detail": "Invalid or expired refresh token."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            # Cookie is junk - clear it so the browser doesn't keep sending it.
+            return clear_refresh_cookie(response)
+
+        access = str(refresh.access_token)
+        return Response({"access": access}, status=status.HTTP_200_OK)
+
+
+class LogoutView(views.APIView):
+    """Clear the refresh cookie. Idempotent - safe to call even when logged out."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        response = Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
+        return clear_refresh_cookie(response)
 
 
 class GoogleLoginView(views.APIView):
@@ -260,13 +300,13 @@ class GoogleLoginView(views.APIView):
             user.is_active = True
             user.save(update_fields=['is_active'])
 
-        refresh = RefreshToken.for_user(user)
-        return Response({
+        refresh, access = issue_tokens_for(user)
+        response = Response({
             'user': UserSerializer(user).data,
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
+            'access': access,
             'created': created,
         }, status=status.HTTP_200_OK)
+        return set_refresh_cookie(response, refresh)
 
 
 class ProfileView(APIView):
@@ -395,6 +435,10 @@ class SearchPetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
+    SIMILARITY_THRESHOLD = 0.3
+    TOP_K = 10
+    CANDIDATE_K = 30  # over-fetch from Qdrant so we can dedupe pets vs locations
+
     def post(self, request):
         try:
             if 'image' not in request.FILES:
@@ -409,180 +453,121 @@ class SearchPetView(APIView):
                 search_image_path = temp_file.name
 
             try:
-                # Extract features from search image (synchronous - user is waiting)
                 search_features, message = pawgle_client.extract_features(search_image_path)
-
                 if not search_features:
-                    return Response({
-                        'error': f'Failed to extract features from search image: {message}'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
+                    return Response(
+                        {'error': f'Failed to extract features from search image: {message}'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 logger.info(f"Search image features extracted: {len(search_features)} dimensions")
 
-                # Group A: pets/locations WITH pre-extracted features (fast comparison)
-                pets_with_features = list(
-                    Pet.objects.filter(feature_status='completed').exclude(features=[])
+                from . import qdrant_index
+
+                pet_hits = qdrant_index.search(
+                    search_features,
+                    collection=settings.QDRANT_PETS_COLLECTION,
+                    limit=self.CANDIDATE_K,
+                    score_threshold=self.SIMILARITY_THRESHOLD,
                 )
-                locations_with_features = list(
-                    PetLocation.objects.filter(feature_status='completed').exclude(features=[])
-                )
-
-                # Group B: pets WITHOUT features (need on-the-fly extraction)
-                pets_without_features = list(
-                    Pet.objects.exclude(feature_status='completed').exclude(images=[])
-                )
-                locations_without_features = list(
-                    PetLocation.objects.exclude(feature_status='completed').filter(image__isnull=False).exclude(image='')
-                )
-
-                # Build Group A database features
-                database_features = []
-                valid_pets = []
-                valid_pet_locations = []
-
-                for pet in pets_with_features:
-                    if pet.features and isinstance(pet.features, list) and len(pet.features) > 0:
-                        database_features.append(pet.features[0] if isinstance(pet.features[0], list) else pet.features)
-                        valid_pets.append(pet)
-                        valid_pet_locations.append(None)
-
-                for location in locations_with_features:
-                    if location.features and isinstance(location.features, list) and len(location.features) > 0:
-                        database_features.append(location.features)
-                        valid_pets.append(None)
-                        valid_pet_locations.append(location)
-
-                # Group B: extract features on-the-fly (capped at 10 to avoid latency)
-                import requests as http_requests
-                group_b_count = len(pets_without_features) + len(locations_without_features)
-                skipped_pending = max(0, group_b_count - 10)
-                group_b_pets = pets_without_features[:10]
-                remaining_slots = 10 - len(group_b_pets)
-                group_b_locations = locations_without_features[:remaining_slots] if remaining_slots > 0 else []
-
-                for pet in group_b_pets:
-                    try:
-                        if not pet.images:
-                            continue
-                        resp = http_requests.get(pet.images[0], timeout=10)
-                        resp.raise_for_status()
-                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                            tmp.write(resp.content)
-                            tmp_path = tmp.name
-                        features, _ = pawgle_client.extract_features(tmp_path)
-                        os.unlink(tmp_path)
-                        if features:
-                            database_features.append(features)
-                            valid_pets.append(pet)
-                            valid_pet_locations.append(None)
-                    except Exception as e:
-                        logger.warning(f"Group B feature extraction failed for pet {pet.id}: {e}")
-
-                for location in group_b_locations:
-                    try:
-                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                            location.image.seek(0)
-                            tmp.write(location.image.read())
-                            tmp_path = tmp.name
-                        features, _ = pawgle_client.extract_features(tmp_path)
-                        os.unlink(tmp_path)
-                        if features:
-                            database_features.append(features)
-                            valid_pets.append(None)
-                            valid_pet_locations.append(location)
-                    except Exception as e:
-                        logger.warning(f"Group B feature extraction failed for location {location.id}: {e}")
-
-                if not database_features:
-                    return Response({
-                        'success': True,
-                        'results': [],
-                        'message': 'No pets with features found in database'
-                    })
-
-                logger.info(f"Comparing with {len(database_features)} feature sets")
-
-                similarities, comparison_message = pawgle_client.batch_compare_features(
-                    search_features, database_features
+                report_hits = qdrant_index.search(
+                    search_features,
+                    collection=settings.QDRANT_REPORTS_COLLECTION,
+                    limit=self.CANDIDATE_K,
+                    score_threshold=self.SIMILARITY_THRESHOLD,
                 )
 
-                if similarities is None:
-                    return Response({
-                        'error': f'Feature comparison failed: {comparison_message}'
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                pet_ids = [h.payload.get("pet_id") for h in pet_hits if h.payload]
+                location_ids = [h.payload.get("location_id") for h in report_hits if h.payload]
+
+                pets_by_id = {
+                    p.id: p
+                    for p in Pet.objects.filter(id__in=pet_ids).prefetch_related('locations')
+                }
+                locations_by_id = {
+                    loc.id: loc
+                    for loc in PetLocation.objects.filter(id__in=location_ids).select_related('pet')
+                }
 
                 results = []
-                similarity_threshold = 0.3
+                seen_pet_ids = set()
 
-                for sim_result in similarities:
-                    similarity_score = sim_result.get('similarity', sim_result.get('similarity_score', 0))
-                    index = sim_result.get('index', 0)
+                for hit in pet_hits:
+                    pet_id = (hit.payload or {}).get("pet_id")
+                    pet = pets_by_id.get(pet_id)
+                    if not pet or pet.id in seen_pet_ids:
+                        continue
+                    seen_pet_ids.add(pet.id)
 
-                    if similarity_score > similarity_threshold and index < len(valid_pets):
-                        pet = valid_pets[index]
-                        location = valid_pet_locations[index]
+                    entry = {
+                        'pet': {
+                            'id': pet.id,
+                            'name': pet.name,
+                            'type': pet.type,
+                            'breed': pet.breed,
+                            'images': pet.images or [],
+                        },
+                        'similarity': round(float(hit.score), 4),
+                        'pet_location': None,
+                    }
+                    pet_loc = pet.locations.first()
+                    if pet_loc:
+                        entry['pet_location'] = {
+                            'id': pet_loc.id,
+                            'status': pet_loc.status,
+                            'latitude': pet_loc.latitude,
+                            'longitude': pet_loc.longitude,
+                            'image_url': pet_loc.image.url if pet_loc.image else None,
+                        }
+                    results.append(entry)
 
-                        if pet:
-                            result_entry = {
-                                'pet': {
-                                    'id': pet.id,
-                                    'name': pet.name,
-                                    'type': pet.type,
-                                    'breed': pet.breed,
-                                    'images': pet.images or [],
-                                },
-                                'similarity': round(similarity_score, 4),
-                                'pet_location': None,
-                            }
-                            pet_loc = PetLocation.objects.filter(pet=pet).first()
-                            if pet_loc:
-                                result_entry['pet_location'] = {
-                                    'id': pet_loc.id,
-                                    'status': pet_loc.status,
-                                    'latitude': pet_loc.latitude,
-                                    'longitude': pet_loc.longitude,
-                                    'image_url': pet_loc.image.url if pet_loc.image else None,
-                                }
-                            results.append(result_entry)
-                        elif location:
-                            results.append({
-                                'pet': {
-                                    'id': location.id,
-                                    'name': location.pet_name or 'Unknown',
-                                    'type': location.pet_type,
-                                    'breed': location.pet_breed,
-                                    'images': [],
-                                },
-                                'similarity': round(similarity_score, 4),
-                                'pet_location': {
-                                    'id': location.id,
-                                    'status': location.status,
-                                    'latitude': location.latitude,
-                                    'longitude': location.longitude,
-                                    'image_url': location.image.url if location.image else None,
-                                },
-                            })
+                for hit in report_hits:
+                    payload = hit.payload or {}
+                    location = locations_by_id.get(payload.get("location_id"))
+                    if not location:
+                        continue
+                    # If this report is for a registered pet we already returned, skip the duplicate.
+                    if location.pet_id and location.pet_id in seen_pet_ids:
+                        continue
+                    results.append({
+                        'pet': {
+                            'id': location.id,
+                            'name': (location.pet.name if location.pet else None) or location.pet_name or 'Unknown',
+                            'type': location.pet_type or (location.pet.type if location.pet else ''),
+                            'breed': location.pet_breed or (location.pet.breed if location.pet else ''),
+                            'images': [],
+                        },
+                        'similarity': round(float(hit.score), 4),
+                        'pet_location': {
+                            'id': location.id,
+                            'status': location.status,
+                            'latitude': location.latitude,
+                            'longitude': location.longitude,
+                            'image_url': location.image.url if location.image else None,
+                        },
+                    })
 
-                results = sorted(results, key=lambda x: x['similarity'], reverse=True)[:10]
+                results = sorted(results, key=lambda x: x['similarity'], reverse=True)[: self.TOP_K]
+
+                pending_pets = Pet.objects.exclude(feature_status='completed').exclude(images=[]).count()
+                pending_locations = PetLocation.objects.exclude(feature_status='completed').exclude(image='').count()
 
                 return Response({
                     'success': True,
                     'results': results,
                     'search_info': {
-                        'total_items_searched': len(database_features),
+                        'total_items_searched': len(pet_hits) + len(report_hits),
                         'matches_found': len(results),
-                        'similarity_threshold': similarity_threshold,
+                        'similarity_threshold': self.SIMILARITY_THRESHOLD,
                         'search_feature_dimensions': len(search_features),
-                        'pending_features_count': group_b_count,
-                        'skipped_pending_count': skipped_pending,
+                        'pending_features_count': pending_pets + pending_locations,
                     },
-                    'message': f'Found {len(results)} similar pets'
+                    'message': f'Found {len(results)} similar pets',
                 })
 
             finally:
                 try:
                     os.unlink(search_image_path)
-                except:
+                except OSError:
                     pass
 
         except Exception as e:

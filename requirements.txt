@@ -19,6 +19,9 @@ boto3==1.35.49
 gradio_client==1.11.0
 huggingface-hub==0.33.4
 
+# Vector search
+qdrant-client==1.12.1
+
 # Image handling
 pillow==11.1.0
 

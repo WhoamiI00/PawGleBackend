@@ -76,7 +76,7 @@ class PetLocationSerializer(serializers.ModelSerializer):
     
     def get_image_url(self, obj):
         if obj.image:
-            return obj.image.url  # This will now return the Supabase URL
+            return obj.image.url
         return None
 
 class ReportPetLocationSerializer(serializers.Serializer):
@@ -196,7 +196,7 @@ class EditedPetImageSerializer(serializers.ModelSerializer):
 
     def get_edited_image_url(self, obj):
         if obj.edited_image:
-            return obj.edited_image.url  # This will now return the Supabase URL
+            return obj.edited_image.url
         return None
 
     def create(self, validated_data):

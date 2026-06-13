@@ -203,7 +203,7 @@ class PetLocation(models.Model):
     last_seen_date = models.DateField(null=True, blank=True)
     last_seen_time = models.TimeField(null=True, blank=True)
     
-    # Updated image field with proper Supabase storage
+    # Pet image stored in R2
     image = models.ImageField(
         storage=R2Storage(),
         upload_to='pets/',  # This will be handled by our custom storage
@@ -272,7 +272,7 @@ class PetLocation(models.Model):
         
         # Add image URL if available
         if self.image:
-            marker['image_url'] = self.image.url  # This will now return the Supabase URL
+            marker['image_url'] = self.image.url
         
         return marker
     

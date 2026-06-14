@@ -1,10 +1,42 @@
 import logging
+import math
 import os
 import tempfile
 import requests
 from django_q.tasks import async_task
 
 logger = logging.getLogger(__name__)
+
+# Cap images processed per pet so multi-photo doesn't balloon extraction time.
+# Five gives diminishing returns on recall and keeps the HuggingFace call
+# count predictable.
+MAX_EMBED_IMAGES = 5
+
+
+def _average_and_normalize(vectors):
+    """Mean-pool a list of equal-length feature vectors, then L2-normalize.
+
+    Cosine similarity assumes unit-length vectors, and the per-image
+    embeddings are already L2-normalized by the upstream model. Mean-pool
+    breaks that invariant - re-normalizing here restores it.
+    """
+    if not vectors:
+        return None
+    if len(vectors) == 1:
+        return vectors[0]
+
+    dim = len(vectors[0])
+    summed = [0.0] * dim
+    for v in vectors:
+        if len(v) != dim:
+            continue  # Drop any odd-shaped vector rather than crash.
+        for i, x in enumerate(v):
+            summed[i] += x
+    averaged = [s / len(vectors) for s in summed]
+    norm = math.sqrt(sum(x * x for x in averaged))
+    if norm == 0:
+        return averaged
+    return [x / norm for x in averaged]
 
 
 def extract_pet_features(pet_id, attempt=1):
@@ -25,24 +57,36 @@ def extract_pet_features(pet_id, attempt=1):
     pet.feature_status = 'processing'
     pet.save(update_fields=['feature_status'])
 
-    temp_path = None
+    temp_paths = []
     try:
         if not pet.images or len(pet.images) == 0:
             raise ValueError("Pet has no images")
 
-        image_url = pet.images[0]
-        response = requests.get(image_url, timeout=30)
-        response.raise_for_status()
+        image_urls = list(pet.images)[:MAX_EMBED_IMAGES]
+        per_image_vectors = []
+        classification = None
+        last_feature_message = None
 
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-            temp_file.write(response.content)
-            temp_path = temp_file.name
+        for idx, image_url in enumerate(image_urls):
+            try:
+                response = requests.get(image_url, timeout=30)
+                response.raise_for_status()
+            except Exception as e:
+                logger.warning(f"Pet {pet_id}: image {idx} download failed: {e}")
+                continue
 
-        # Extract features
-        features, feature_message = pawgle_client.extract_features(temp_path)
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                temp_file.write(response.content)
+                temp_paths.append(temp_file.name)
 
-        # Classify pet
-        classification, class_message = pawgle_client.classify_pet(temp_path)
+            features, last_feature_message = pawgle_client.extract_features(temp_paths[-1])
+            if features:
+                per_image_vectors.append(features)
+
+            # Classify off the first usable image only - classification doesn't
+            # need to be re-run for every photo of the same animal.
+            if classification is None:
+                classification, _ = pawgle_client.classify_pet(temp_paths[-1])
 
         # Re-fetch pet to confirm it still exists before saving
         try:
@@ -51,19 +95,27 @@ def extract_pet_features(pet_id, attempt=1):
             logger.warning(f"Pet {pet_id} deleted during processing, skipping save")
             return
 
-        if features:
-            pet.features = [features]
-            pet.feature_status = 'completed'
-        else:
-            raise ValueError(f"Feature extraction failed: {feature_message}")
+        averaged = _average_and_normalize(per_image_vectors)
+        if averaged is None:
+            raise ValueError(
+                f"Feature extraction returned no usable vectors "
+                f"(last message: {last_feature_message})"
+            )
+
+        pet.features = [averaged]
+        pet.feature_status = 'completed'
 
         if classification:
             additional_info = pet.additionalInfo or {}
             additional_info['ai_classification'] = classification
+            # Record how many images contributed so we can debug match quality.
+            additional_info['embedding_image_count'] = len(per_image_vectors)
             pet.additionalInfo = additional_info
 
         pet.save(update_fields=['features', 'feature_status', 'additionalInfo'])
-        logger.info(f"Pet {pet_id} features extracted successfully")
+        logger.info(
+            f"Pet {pet_id} features extracted from {len(per_image_vectors)} image(s)"
+        )
 
         # Mirror the embedding into Qdrant for fast similarity search.
         # Failures here are logged inside qdrant_index and must not break the task.
@@ -108,9 +160,9 @@ def extract_pet_features(pet_id, attempt=1):
                 logger.warning(f"Pet {pet_id} deleted, cannot set failure status")
 
     finally:
-        if temp_path:
+        for p in temp_paths:
             try:
-                os.unlink(temp_path)
+                os.unlink(p)
             except OSError:
                 pass
 

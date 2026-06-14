@@ -154,12 +154,25 @@ class Command(BaseCommand):
         return user
 
     def _upload_image(self, image_path: Path) -> str:
-        """Upload to R2 via Django's default storage; return the public URL."""
-        from django.core.files.storage import default_storage
-        target = f"test_seed/{uuid.uuid4().hex}_{image_path.name}"
+        """Upload to R2 via the explicit R2Storage backend and return the
+        public URL.
+
+        Notes:
+          - Bypasses default_storage because Django 5+ may not pick up
+            DEFAULT_FILE_STORAGE the same way as it used to, and falling
+            back to FileSystemStorage silently is a footgun.
+          - R2Storage.get_available_name() renames the file to a fresh
+            UUID, so we must use the returned `saved` name (not the
+            target we passed in) when generating the URL. Otherwise
+            pet.images[0] points at a key that doesn't exist.
+        """
+        from accounts.storage import R2Storage
+
+        storage = R2Storage()
+        target = f"test_seed/{image_path.name}"
         with image_path.open('rb') as f:
-            saved = default_storage.save(target, File(f))
-        return default_storage.url(saved)
+            saved = storage.save(target, File(f))
+        return storage.url(saved)
 
     def _jitter(self, lat, lon, radius_deg=0.05):
         """Spread reports within ~5km so map markers don't stack."""

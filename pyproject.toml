@@ -23,4 +23,5 @@ dependencies = [
     "google-auth>=2.54.0",
     "qdrant-client>=1.12.1",
     "sentry-sdk[django]>=2.18.0",
+    "whitenoise>=6.12.0",
 ]

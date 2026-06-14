@@ -206,3 +206,5 @@ urllib3==2.6.3
     #   qdrant-client
     #   requests
     #   sentry-sdk
+whitenoise==6.12.0
+    # via animal-backend

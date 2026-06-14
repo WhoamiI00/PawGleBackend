@@ -109,8 +109,12 @@ class Pet(models.Model):
         unique=True,
         editable=False
     )
-    
+
     registered_at = models.DateTimeField(auto_now_add=True)
+
+    # Marks rows created by the seed_test_data management command so the UI
+    # can render a "TEST" badge and we can wipe them in one shot.
+    is_test = models.BooleanField(default=False, db_index=True)
 
     def __str__(self):
         return f"{self.name} ({self.animal_id})"
@@ -223,7 +227,11 @@ class PetLocation(models.Model):
 
     # Add field to track if this is a user's current location
     is_user_location = models.BooleanField(default=False)
-    
+
+    # Marks rows created by the seed_test_data management command so the UI
+    # can render a "TEST" badge and we can wipe them in one shot.
+    is_test = models.BooleanField(default=False, db_index=True)
+
     class Meta:
         indexes = [
             models.Index(fields=['status']),
@@ -268,6 +276,7 @@ class PetLocation(models.Model):
             'type': self.pet.type if self.pet else self.pet_type,
             'breed': self.pet.breed if self.pet else self.pet_breed,
             'isUserLocation': self.is_user_location,
+            'is_test': self.is_test,
         }
         
         # Add image URL if available

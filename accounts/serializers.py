@@ -70,9 +70,9 @@ class PetLocationSerializer(serializers.ModelSerializer):
             'reported_at', 'resolved_at', 'contact_name', 'contact_phone',
             'contact_email', 'last_seen_date', 'last_seen_time',
             'animal_name', 'animal_id', 'type', 'breed', 'category',
-            'owner_name', 'image', 'image_url', 'feature_status'
+            'owner_name', 'image', 'image_url', 'feature_status', 'is_test',
         ]
-        read_only_fields = ['reported_at', 'resolved_at', 'feature_status']
+        read_only_fields = ['reported_at', 'resolved_at', 'feature_status', 'is_test']
     
     def get_image_url(self, obj):
         if obj.image:
@@ -238,12 +238,14 @@ class ConversationSerializer(serializers.ModelSerializer):
     pet_image_url = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
+    is_test = serializers.BooleanField(source='pet_location.is_test', read_only=True, default=False)
 
     class Meta:
         model = Conversation
         fields = [
             'id', 'pet_location_id', 'pet_name', 'pet_image_url',
             'last_message_at', 'last_message_preview', 'unread_count', 'created_at',
+            'is_test',
         ]
 
     def _resolve_pet(self, obj):

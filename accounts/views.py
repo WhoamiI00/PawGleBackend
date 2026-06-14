@@ -744,7 +744,7 @@ class NotificationListView(APIView):
     def get(self, request):
         notifications = Notification.objects.filter(
             recipient=request.user
-        ).order_by('-created_at')[:50]
+        ).select_related('target').order_by('-created_at')[:50]
         serializer = NotificationSerializer(notifications, many=True)
         unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
         return Response({
@@ -923,7 +923,7 @@ class UserPetLocationsView(generics.ListAPIView):
         # Instead of using union, use a combined Q object query
         return PetLocation.objects.filter(
             Q(pet__owner=user) | Q(pet__isnull=True, contact_email=user.email)
-        ).select_related('pet')
+        ).select_related('pet__owner')
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -941,7 +941,7 @@ class ListPetLocationsView(generics.ListAPIView):
         # Return only active reports (not resolved)
         return PetLocation.objects.filter(
             Q(status='lost') | Q(status='found')
-        ).select_related('pet')
+        ).select_related('pet__owner')
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -958,7 +958,7 @@ class ListLostPetsView(generics.ListAPIView):
     def get_queryset(self):
         return PetLocation.objects.filter(
             status='lost'
-        ).select_related('pet')
+        ).select_related('pet__owner')
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -975,7 +975,7 @@ class ListFoundPetsView(generics.ListAPIView):
     def get_queryset(self):
         return PetLocation.objects.filter(
             status='found'
-        ).select_related('pet')
+        ).select_related('pet__owner')
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -1023,7 +1023,7 @@ def contact_pet_owner(request):
         
         # Get pet location information
         try:
-            pet_location = PetLocation.objects.get(id=pet_location_id)
+            pet_location = PetLocation.objects.select_related('pet__owner').get(id=pet_location_id)
         except PetLocation.DoesNotExist:
             return JsonResponse({
                 'success': False,
@@ -1219,8 +1219,8 @@ def toggle_share_contact_info(request):
         share_info = request.POST.get('share_info') == 'true'
         
         try:
-            conversation = Conversation.objects.get(id=conversation_id)
-            
+            conversation = Conversation.objects.select_related('pet_location__pet__owner').get(id=conversation_id)
+
             if user_type == 'owner':
                 conversation.owner_share_info = share_info
             elif user_type == 'reporter':
@@ -1334,7 +1334,7 @@ def forward_conversation_reply(payload):
     conversation_id = match.group(1)
 
     try:
-        conversation = Conversation.objects.get(id=uuid.UUID(conversation_id))
+        conversation = Conversation.objects.select_related('pet_location__pet__owner').get(id=uuid.UUID(conversation_id))
     except (Conversation.DoesNotExist, ValueError):
         return False, f"Conversation {conversation_id} not found"
 
@@ -1513,7 +1513,7 @@ def forward_reply_webhook(request):
 
 def share_contact(request, conversation_id, user_type, decision):
     try:
-        conversation = Conversation.objects.get(id=conversation_id)
+        conversation = Conversation.objects.select_related('pet_location__pet__owner').get(id=conversation_id)
         
         if user_type == 'owner':
             conversation.owner_share_info = (decision == 'yes')

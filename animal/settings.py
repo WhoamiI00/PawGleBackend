@@ -69,9 +69,20 @@ DATABASES = {
         'USER': os.getenv('TIDB_USERNAME'),
         'PASSWORD': os.getenv('TIDB_PASSWORD'),
         'NAME': os.getenv('TIDB_DATABASE'),
+        # TiDB Cloud (esp. free tier) silently drops idle connections after
+        # ~60-90s. Without health checks Django reuses a dead socket and the
+        # request 500s. CONN_MAX_AGE caps reuse, CONN_HEALTH_CHECKS pings
+        # before each request and reconnects transparently if needed.
+        'CONN_MAX_AGE': 60,
+        'CONN_HEALTH_CHECKS': True,
         'OPTIONS': {
             'charset': 'utf8mb4',
             'ssl': {'ssl-mode': 'VERIFY_IDENTITY'},
+            # Bound the TCP handshake / read so a stuck connection fails fast
+            # instead of holding a gunicorn worker for the full 30s default.
+            'connect_timeout': 10,
+            'read_timeout': 30,
+            'write_timeout': 30,
         },
     }
 }

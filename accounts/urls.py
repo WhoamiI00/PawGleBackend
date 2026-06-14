@@ -14,6 +14,7 @@ from .chat_views import (
     ConversationListView, ConversationDetailView,
     MessageListCreateView, ConversationStartView,
 )
+from .tag_views import PetQRTagView, PublicPetByAnimalIdView
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
     'get': 'list',
@@ -71,4 +72,9 @@ urlpatterns = [
     path('chat/conversations/start/', ConversationStartView.as_view(), name='chat_conversations_start'),
     path('chat/conversations/<uuid:conversation_id>/', ConversationDetailView.as_view(), name='chat_conversation_detail'),
     path('chat/conversations/<uuid:conversation_id>/messages/', MessageListCreateView.as_view(), name='chat_messages'),
+
+    # QR pet tags
+    path('pets/<int:pet_id>/qr/', PetQRTagView.as_view(), name='pet_qr_tag'),
+    # Public landing page for scanned QR codes (no auth)
+    path('found/<str:animal_id>/', PublicPetByAnimalIdView.as_view(), name='public_pet_by_animal_id'),
 ]

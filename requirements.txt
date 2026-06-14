@@ -31,6 +31,7 @@ click==8.3.1
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   click
+    #   qrcode
     #   tqdm
 cryptography==46.0.6
     # via
@@ -132,7 +133,9 @@ packaging==26.0
     #   gunicorn
     #   huggingface-hub
 pillow==12.1.1
-    # via animal-backend
+    # via
+    #   animal-backend
+    #   qrcode
 portalocker==3.2.0
     # via qdrant-client
 protobuf==7.35.1
@@ -162,6 +165,8 @@ pywin32==312 ; sys_platform == 'win32'
 pyyaml==6.0.3
     # via huggingface-hub
 qdrant-client==1.18.0
+    # via animal-backend
+qrcode==8.2
     # via animal-backend
 requests==2.33.0
     # via animal-backend

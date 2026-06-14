@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 class RegisterView(views.APIView):
+    throttle_scope = 'signup'
+
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
@@ -80,6 +82,8 @@ class RegisterView(views.APIView):
 
 
 class VerifyEmailView(views.APIView):
+    throttle_scope = 'email_verification'
+
     def get(self, request):
         uid = request.query_params.get('uid')
         token = request.query_params.get('token')
@@ -107,6 +111,8 @@ class VerifyEmailView(views.APIView):
 
 
 class ResendVerificationView(views.APIView):
+    throttle_scope = 'email_verification'
+
     def post(self, request):
         email = request.data.get('email')
         if not email:
@@ -136,6 +142,8 @@ class ResendVerificationView(views.APIView):
 
 
 class ForgotPasswordView(views.APIView):
+    throttle_scope = 'password_reset'
+
     def post(self, request):
         email = request.data.get('email')
         if not email:
@@ -162,6 +170,8 @@ class ForgotPasswordView(views.APIView):
 
 
 class ResetPasswordView(views.APIView):
+    throttle_scope = 'password_reset'
+
     def post(self, request):
         uid = request.data.get('uid')
         token = request.data.get('token')
@@ -185,6 +195,8 @@ class ResetPasswordView(views.APIView):
 
 
 class LoginView(views.APIView):
+    throttle_scope = 'login'
+
     def post(self, request):
         email = request.data.get('email')
         password = request.data.get('password')
@@ -246,6 +258,7 @@ class LogoutView(views.APIView):
 class GoogleLoginView(views.APIView):
     """Sign in / sign up with a Google ID token from Google Identity Services."""
     permission_classes = []
+    throttle_scope = 'login'
 
     def post(self, request):
         from google.oauth2 import id_token
@@ -323,6 +336,7 @@ class ProfileView(APIView):
 class AddPetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_scope = 'pet_write'
 
     def post(self, request):
         try:
@@ -434,6 +448,7 @@ class AddPetView(APIView):
 class SearchPetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_scope = 'pet_search'
 
     SIMILARITY_THRESHOLD = 0.3
     TOP_K = 10
@@ -588,6 +603,7 @@ class DeletePetView(APIView):
 
 class EditPetView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'pet_write'
 
     def put(self, request, pet_id):
         try:
@@ -655,6 +671,7 @@ class PublicPetDashboardView(APIView):
 
 class DeletePetView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_scope = 'pet_write'
 
     def delete(self, request, pet_id):
         try:
@@ -804,6 +821,7 @@ class ReportPetLocationView(generics.CreateAPIView):
     serializer_class = ReportPetLocationSerializer
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_scope = 'report_pet'
 
     def post(self, request, *args, **kwargs):
         pet_id = request.data.get('pet_id')

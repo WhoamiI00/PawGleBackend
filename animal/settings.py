@@ -31,6 +31,27 @@ QDRANT_PETS_COLLECTION = os.getenv("QDRANT_PETS_COLLECTION", "pawgle_pets")
 QDRANT_REPORTS_COLLECTION = os.getenv("QDRANT_REPORTS_COLLECTION", "pawgle_reports")
 QDRANT_VECTOR_DIM = int(os.getenv("QDRANT_VECTOR_DIM", "512"))
 
+# Sentry: opt-in via env. No DSN -> SDK is never initialized, app behaves as before.
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "development")
+# Tune these in prod. 10% sampling keeps the free tier viable.
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+SENTRY_PROFILES_SAMPLE_RATE = float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.0"))
+
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        integrations=[DjangoIntegration()],
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        profiles_sample_rate=SENTRY_PROFILES_SAMPLE_RATE,
+        # send_default_pii is false by default - DON'T flip on without a privacy review.
+        send_default_pii=False,
+    )
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Database: TiDB Cloud (MySQL-compatible)
@@ -122,6 +143,25 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+    # Anonymous + per-user throttle classes are always on so we can scope
+    # them per-view. Limits below are conservative: tighten as you see abuse.
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/min',          # generic anon ceiling
+        'user': '300/min',         # generic authed ceiling
+        'login': '10/min',         # password / google login attempts
+        'signup': '5/min',         # account creation
+        'password_reset': '5/hour',
+        'email_verification': '5/hour',
+        'pet_search': '20/min',    # similarity search (calls HuggingFace)
+        'pet_write': '30/min',     # add / edit / delete pet
+        'report_pet': '10/min',    # lost/found report submissions
+        'contact_owner': '10/hour',
+    },
 }
 
 SIMPLE_JWT = {

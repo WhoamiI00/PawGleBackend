@@ -236,26 +236,33 @@ def search(
     score_threshold: Optional[float] = None,
     extra_filter=None,
 ):
-    """Returns the raw Qdrant ScoredPoint list, or [] if Qdrant is unavailable.
+    """Returns a list of ScoredPoint-like objects (with .id, .score, .payload),
+    or [] if Qdrant is unavailable.
 
-    Callers should hydrate full records from TiDB using the payload ids.
+    qdrant-client removed the legacy `client.search()` method in 1.13+ in
+    favor of `query_points()`, which returns a wrapped QueryResponse. We
+    unwrap `.points` so callers keep the same shape they had before.
     """
     _ensure_collections()
     client = _get_client()
     if client is None or not query_vector:
         return []
 
-    result = _retry(
-        lambda: client.search(
+    def _do_query():
+        response = client.query_points(
             collection_name=collection,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             score_threshold=score_threshold,
             query_filter=extra_filter,
             with_payload=True,
-        ),
-        op=f"search({collection})",
-    )
+        )
+        # query_points returns QueryResponse(points=[...]); legacy .search
+        # returned the list directly. Normalize to the list shape so all
+        # call sites stay simple.
+        return list(getattr(response, 'points', response) or [])
+
+    result = _retry(_do_query, op=f"search({collection})")
     return result or []
 
 

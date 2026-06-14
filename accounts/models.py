@@ -415,6 +415,41 @@ class PetMatch(models.Model):
         return f"Match {self.id}: {lost} <-> {self.found_report} ({self.similarity:.2f})"
 
 
+class AlertSubscription(models.Model):
+    """A user wants to be pinged whenever a lost/found report lands inside
+    `radius_km` of (center_lat, center_lon). Typically created from a
+    "Notify me about pets near home" UI.
+
+    Notifications are best-effort: we check subscriptions when a new
+    PetLocation is reported and create in-app Notification rows; full
+    geo indexing (e.g. PostGIS) is overkill at our scale - we filter
+    candidates with a cheap bounding box then refine with haversine in
+    Python.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='alert_subscriptions',
+    )
+    label = models.CharField(max_length=64, blank=True, help_text='e.g. "Home" or "Office"')
+    center_lat = models.FloatField()
+    center_lon = models.FloatField()
+    radius_km = models.FloatField(default=5.0)
+    # Optional filter: 'lost', 'found', or '' for both.
+    status_filter = models.CharField(max_length=10, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'is_active']),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username} alert: {self.radius_km}km around ({self.center_lat:.2f}, {self.center_lon:.2f})"
+
+
 class EditedPetImage(models.Model):
     edited_image = models.ImageField(
         storage=R2Storage(),

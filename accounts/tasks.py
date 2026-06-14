@@ -222,6 +222,14 @@ def extract_location_features(pet_location_id, attempt=1):
                 async_task('accounts.tasks.run_auto_match', pet_location_id)
             except Exception as e:
                 logger.error(f"Failed to enqueue auto-match for {pet_location_id}: {e}")
+
+            # Geo-radius alerts run on every report regardless of feature extraction,
+            # so they don't need to wait for vector extraction at all - but riding on
+            # this task keeps the failure mode in one place. Cheap, fire-and-forget.
+            try:
+                async_task('accounts.tasks.run_nearby_alerts', pet_location_id)
+            except Exception as e:
+                logger.error(f"Failed to enqueue nearby alerts for {pet_location_id}: {e}")
         else:
             raise ValueError(f"Feature extraction failed: {feature_message}")
 
@@ -263,3 +271,14 @@ def run_auto_match(pet_location_id):
             logger.info(f"Auto-match created {count} new PetMatch row(s) for location {pet_location_id}")
     except Exception as e:
         logger.error(f"run_auto_match({pet_location_id}) crashed: {e}")
+
+
+def run_nearby_alerts(pet_location_id):
+    """Async wrapper around alerts.notify_subscribers."""
+    try:
+        from . import alerts
+        count = alerts.notify_subscribers(pet_location_id)
+        if count:
+            logger.info(f"Nearby alerts: notified {count} subscriber(s) about location {pet_location_id}")
+    except Exception as e:
+        logger.error(f"run_nearby_alerts({pet_location_id}) crashed: {e}")

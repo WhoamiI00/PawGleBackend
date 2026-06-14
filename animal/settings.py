@@ -31,6 +31,12 @@ QDRANT_PETS_COLLECTION = os.getenv("QDRANT_PETS_COLLECTION", "pawgle_pets")
 QDRANT_REPORTS_COLLECTION = os.getenv("QDRANT_REPORTS_COLLECTION", "pawgle_reports")
 QDRANT_VECTOR_DIM = int(os.getenv("QDRANT_VECTOR_DIM", "512"))
 
+# Auto-match thresholds. Score is cosine similarity in [0, 1]; higher = stricter.
+# Distance limits noisy "Mumbai cat matches Berlin dog" notifications.
+AUTOMATCH_MIN_SIMILARITY = float(os.getenv("AUTOMATCH_MIN_SIMILARITY", "0.6"))
+AUTOMATCH_MAX_DISTANCE_KM = float(os.getenv("AUTOMATCH_MAX_DISTANCE_KM", "50"))
+AUTOMATCH_CANDIDATE_LIMIT = int(os.getenv("AUTOMATCH_CANDIDATE_LIMIT", "10"))
+
 # Sentry: opt-in via env. No DSN -> SDK is never initialized, app behaves as before.
 SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
 SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "development")

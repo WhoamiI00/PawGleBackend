@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Pet, PetLocation,Notification
+from .models import Pet, PetLocation, Notification, Conversation, Message, MessageAttachment, PetMatch
 from random import randint
 
 class UserSerializer(serializers.ModelSerializer):
@@ -206,3 +206,79 @@ class EditedPetImageSerializer(serializers.ModelSerializer):
             edited_image=request.FILES.get('edited_image'),
             edit_metadata=validated_data.get('edit_metadata', {})
         )
+
+
+# ---------- Chat ----------
+
+class MessageAttachmentSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MessageAttachment
+        fields = ['id', 'url', 'created_at']
+
+    def get_url(self, obj):
+        return obj.image.url if obj.image else None
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.IntegerField(source='sender.id', read_only=True, default=None)
+    sender_name = serializers.CharField(source='sender.username', read_only=True, default='')
+    attachments = MessageAttachmentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Message
+        fields = ['id', 'sender_id', 'sender_name', 'body', 'attachments', 'created_at', 'read_at']
+        read_only_fields = ['id', 'sender_id', 'sender_name', 'attachments', 'created_at', 'read_at']
+
+
+class ConversationSerializer(serializers.ModelSerializer):
+    pet_location_id = serializers.IntegerField(source='pet_location.id', read_only=True)
+    pet_name = serializers.SerializerMethodField()
+    pet_image_url = serializers.SerializerMethodField()
+    last_message_preview = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Conversation
+        fields = [
+            'id', 'pet_location_id', 'pet_name', 'pet_image_url',
+            'last_message_at', 'last_message_preview', 'unread_count', 'created_at',
+        ]
+
+    def _resolve_pet(self, obj):
+        return obj.pet_location.pet if obj.pet_location and obj.pet_location.pet else None
+
+    def get_pet_name(self, obj):
+        pet = self._resolve_pet(obj)
+        if pet:
+            return pet.name
+        return (obj.pet_location.pet_name if obj.pet_location else '') or 'Unknown'
+
+    def get_pet_image_url(self, obj):
+        pet = self._resolve_pet(obj)
+        if pet and pet.images:
+            try:
+                return pet.images[0]
+            except (IndexError, TypeError):
+                pass
+        if obj.pet_location and obj.pet_location.image:
+            return obj.pet_location.image.url
+        return None
+
+    def get_last_message_preview(self, obj):
+        # Annotated by the view; fall back to a query if not.
+        msg = getattr(obj, '_last_message', None)
+        if msg is None:
+            msg = obj.messages.order_by('-created_at').first()
+        if not msg:
+            return None
+        body = msg.body or ('[photo]' if msg.attachments.exists() else '')
+        return body[:120]
+
+    def get_unread_count(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 0
+        # Messages not sent by me + not read.
+        return obj.messages.filter(read_at__isnull=True).exclude(sender_id=request.user.id).count()

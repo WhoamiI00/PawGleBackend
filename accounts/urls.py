@@ -10,6 +10,10 @@ from .views import (
     NotificationListView, MarkNotificationReadView, MarkAllNotificationsReadView,
     forward_reply_webhook,
 )
+from .chat_views import (
+    ConversationListView, ConversationDetailView,
+    MessageListCreateView, ConversationStartView,
+)
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
     'get': 'list',
@@ -61,4 +65,10 @@ urlpatterns = [
     path('notifications/read-all/', MarkAllNotificationsReadView.as_view(), name='mark_all_notifications_read'),
     path('edited-pet-images/', edited_pet_image_list, name='edited_pet_image_list'),
     path('edited-pet-images/<int:pk>/', edited_pet_image_detail, name='edited_pet_image_detail'),
+
+    # In-app chat
+    path('chat/conversations/', ConversationListView.as_view(), name='chat_conversations'),
+    path('chat/conversations/start/', ConversationStartView.as_view(), name='chat_conversations_start'),
+    path('chat/conversations/<uuid:conversation_id>/', ConversationDetailView.as_view(), name='chat_conversation_detail'),
+    path('chat/conversations/<uuid:conversation_id>/messages/', MessageListCreateView.as_view(), name='chat_messages'),
 ]

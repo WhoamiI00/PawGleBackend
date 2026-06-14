@@ -288,20 +288,132 @@ class Notification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Conversation(models.Model):
+    """A 1:N message thread tied to a found/lost report.
+
+    `participants` is the authoritative list of users with access. Legacy
+    `reporter_email` / `reporter_name` stay so the existing share-contact
+    email flow keeps working, but new conversations write to
+    `participants` and store messages in the Message table below.
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     pet_location = models.ForeignKey(PetLocation, on_delete=models.CASCADE, related_name='conversations')
-    reporter_email = models.EmailField()
-    reporter_name = models.CharField(max_length=100)
+    participants = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name='chat_conversations',
+        blank=True,
+    )
+    # Legacy fields - kept for backwards compatibility with the old email-only flow.
+    reporter_email = models.EmailField(blank=True)
+    reporter_name = models.CharField(max_length=100, blank=True)
     owner_share_info = models.BooleanField(default=False)
     reporter_share_info = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-    
+    last_message_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ['-last_message_at', '-created_at']
+
     def __str__(self):
         if self.pet_location.pet:
             pet_name = self.pet_location.pet.name
         else:
             pet_name = self.pet_location.pet_name or "Unknown Pet"
         return f"Conversation {self.id} - {pet_name}"
+
+
+class Message(models.Model):
+    """A single chat bubble inside a Conversation."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE, related_name='messages',
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sent_messages',
+    )
+    body = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Per-recipient read state would normally need a join table; since chats
+    # are 1:1 in practice we just stamp "the other side has read up to here".
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['conversation', 'created_at']),
+        ]
+
+
+class MessageAttachment(models.Model):
+    """An image attached to a Message (e.g. a clearer photo of the found pet)."""
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='attachments')
+    image = models.ImageField(
+        storage=R2Storage(),
+        upload_to='chat/',
+        help_text='Attachment stored in R2.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class PetMatch(models.Model):
+    """A high-confidence cross-match between a registered Pet and a PetLocation
+    report, surfaced automatically when embeddings line up.
+
+    `lost_side` is what the user is searching for - typically a registered Pet
+    they marked lost (or the lost PetLocation report itself when there's no
+    registered pet). `found_side` is the PetLocation report that matched it.
+    Either side can be null if the row was created from a partial match.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),     # owner hasn't reacted yet
+        ('confirmed', 'Confirmed'), # owner says "yes, that's my pet"
+        ('dismissed', 'Dismissed'), # owner says "not a match"
+    ]
+
+    lost_pet = models.ForeignKey(
+        Pet, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='lost_side_matches',
+    )
+    lost_report = models.ForeignKey(
+        PetLocation, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='lost_side_matches',
+    )
+    found_report = models.ForeignKey(
+        PetLocation, on_delete=models.CASCADE,
+        related_name='found_side_matches',
+    )
+    similarity = models.FloatField()
+    distance_meters = models.FloatField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='pending')
+    notified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Stop the same pair from being re-notified each time embeddings churn.
+        # MySQL/TiDB treats NULL as distinct in unique indexes, so when only
+        # one of (lost_pet, lost_report) is set the other null doesn't trip
+        # the constraint - no need for partial-index `condition`.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['lost_pet', 'found_report'],
+                name='unique_petmatch_lost_pet_found_report',
+            ),
+            models.UniqueConstraint(
+                fields=['lost_report', 'found_report'],
+                name='unique_petmatch_lost_report_found_report',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
+        ordering = ['-similarity', '-created_at']
+
+    def __str__(self):
+        lost = self.lost_pet or self.lost_report
+        return f"Match {self.id}: {lost} <-> {self.found_report} ({self.similarity:.2f})"
+
 
 class EditedPetImage(models.Model):
     edited_image = models.ImageField(

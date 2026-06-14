@@ -163,6 +163,13 @@ def extract_location_features(pet_location_id, attempt=1):
                 qdrant_index.upsert_report(location)
             except Exception as e:
                 logger.error(f"Qdrant upsert for location {pet_location_id} failed: {e}")
+
+            # Run auto-match in a follow-on async task so the extraction worker
+            # frees up immediately. Failures inside are logged, not raised.
+            try:
+                async_task('accounts.tasks.run_auto_match', pet_location_id)
+            except Exception as e:
+                logger.error(f"Failed to enqueue auto-match for {pet_location_id}: {e}")
         else:
             raise ValueError(f"Feature extraction failed: {feature_message}")
 
@@ -190,3 +197,17 @@ def extract_location_features(pet_location_id, attempt=1):
                 os.unlink(temp_path)
             except OSError:
                 pass
+
+
+def run_auto_match(pet_location_id):
+    """Async wrapper around automatch.run_for_location.
+
+    Lives in tasks.py so django-q can serialize it by module path.
+    """
+    try:
+        from . import automatch
+        count = automatch.run_for_location(pet_location_id)
+        if count:
+            logger.info(f"Auto-match created {count} new PetMatch row(s) for location {pet_location_id}")
+    except Exception as e:
+        logger.error(f"run_auto_match({pet_location_id}) crashed: {e}")

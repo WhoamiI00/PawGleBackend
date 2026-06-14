@@ -15,6 +15,8 @@ from .chat_views import (
     MessageListCreateView, ConversationStartView,
 )
 from .tag_views import PetQRTagView, PublicPetByAnimalIdView
+from .magic_link import RequestMagicLinkView, ConsumeMagicLinkView
+from .alerts import AlertSubscriptionListView, AlertSubscriptionDetailView
 
 edited_pet_image_list = EditedPetImageViewSet.as_view({
     'get': 'list',
@@ -77,4 +79,12 @@ urlpatterns = [
     path('pets/<int:pet_id>/qr/', PetQRTagView.as_view(), name='pet_qr_tag'),
     # Public landing page for scanned QR codes (no auth)
     path('found/<str:animal_id>/', PublicPetByAnimalIdView.as_view(), name='public_pet_by_animal_id'),
+
+    # Magic-link sign-in (passwordless)
+    path('magic/request/', RequestMagicLinkView.as_view(), name='magic_request'),
+    path('magic/consume/', ConsumeMagicLinkView.as_view(), name='magic_consume'),
+
+    # Geographic radius alerts
+    path('alerts/', AlertSubscriptionListView.as_view(), name='alert_subscriptions'),
+    path('alerts/<int:pk>/', AlertSubscriptionDetailView.as_view(), name='alert_subscription_detail'),
 ]
